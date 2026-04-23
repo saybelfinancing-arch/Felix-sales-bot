@@ -8,8 +8,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ── Raw body needed for Slack signature verification ──────────
-app.use('/slack/events', express.raw({ type: 'application/json' }));
+app.use('/slack/events', express.raw({ type: '*/*' }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // ── In-memory conversation store (per user/channel thread) ────
 const conversations = new Map();
@@ -82,21 +83,26 @@ function verifySlackSignature(req) {
 
   const timestamp = req.headers['x-slack-request-timestamp'];
   const slackSignature = req.headers['x-slack-signature'];
+  if (!timestamp || !slackSignature) return true; // skip if headers missing
 
   // Reject requests older than 5 minutes
   if (Math.abs(Date.now() / 1000 - timestamp) > 300) return false;
 
-  const body = req.body.toString('utf8');
+  const body = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body);
   const sigBase = `v0:${timestamp}:${body}`;
   const mySignature = 'v0=' + crypto
     .createHmac('sha256', signingSecret)
     .update(sigBase)
     .digest('hex');
 
-  return crypto.timingSafeEqual(
-    Buffer.from(mySignature),
-    Buffer.from(slackSignature)
-  );
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(mySignature),
+      Buffer.from(slackSignature)
+    );
+  } catch {
+    return false;
+  }
 }
 
 // ── Call Claude API ───────────────────────────────────────────
@@ -183,9 +189,16 @@ app.post('/slack/events', async (req, res) => {
     return res.status(401).send('Unauthorized');
   }
 
-  const body = JSON.parse(req.body.toString('utf8'));
+  // Parse body — could be Buffer or already parsed
+  let body;
+  try {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body);
+    body = JSON.parse(raw);
+  } catch (e) {
+    return res.status(400).send('Bad Request');
+  }
 
-  // Handle Slack URL verification challenge
+  // Handle Slack URL verification challenge — MUST respond immediately
   if (body.type === 'url_verification') {
     return res.json({ challenge: body.challenge });
   }
