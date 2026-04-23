@@ -1,73 +1,44 @@
-// ============================================================
-// FELIX — Sales Agent Slack Bot for SBL IT Platforms Co., Ltd.
-// ============================================================
 const express = require('express');
 const crypto = require('crypto');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Store raw body for signature verification ─────────────────
+// Capture raw body as string for ALL routes
 app.use((req, res, next) => {
-  let data = '';
-  req.on('data', chunk => { data += chunk; });
+  req.rawBody = '';
+  req.on('data', chunk => { req.rawBody += chunk.toString(); });
   req.on('end', () => {
-    req.rawBody = data;
-    try { req.body = JSON.parse(data); } catch (e) { req.body = {}; }
+    if (req.rawBody) {
+      try { req.body = JSON.parse(req.rawBody); } catch { req.body = {}; }
+    } else {
+      req.body = {};
+    }
     next();
   });
 });
 
-// ── In-memory conversation store ──────────────────────────────
-const conversations = new Map();
-const processedEvents = new Set();
-
-// ── Felix system prompt ───────────────────────────────────────
 const FELIX_SYSTEM = `You are Felix, the B2B Sales AI Agent for SBL IT Platforms Co., Ltd. — a Thai distributor of healthy foods and beverages.
 
 COMPANY: SBL IT PLATFORMS CO., LTD. | www.sblplat.co.th | www.sblplat.store
-Price list effective: Thailand - 01/01/2026
 
-MONTHLY TARGETS:
-- Revenue: ฿250,000/month
-- New B2B Clients: 10–20/month
+MONTHLY TARGETS: Revenue ฿250,000/month | New B2B Clients: 10-20/month
 
-━━ SBL MINERAL WATER WITH SI ━━
-1. SBL Mineral Water 0.5L GLASS
-   Big Wholesale 500+: ฿54 | Small Wholesale 40-499: ฿58 | Credit 15 days: ฿60 | Retail: ฿65
-   Pack: 20 bottles | Shelf life: 24 months
+PRODUCTS & PRICING:
+SBL Mineral Water 0.5L GLASS: Big Wholesale 500+: ฿54 | Small 40-499: ฿58 | Credit 15d: ฿60 | Retail: ฿65
+SBL Mineral Water 0.5L PET: Big Wholesale 500+: ฿44 | Small 40-499: ฿48 | Credit 15d: ฿50 | Retail: ฿55
+FitnesShock Protein Brownies (Cookie Cream, Banana Choc, Hot Choc, Coconut Pie) 50g: ฿75/pc
+SHOCKS! Pistachio Coated Bar 50g: ฿65/pc | SHOCKS! Peanut Coated Bar 50g: ฿65/pc
+FitnesShock Banana Dessert Bar 60g: ฿75/pc | FitnesShock Pistachio Dessert Bar 60g: ฿75/pc
+NEW Glazed Bar Milk Caramel-Coconut 35g: ฿60/pc | NEW Glazed Bar Chocolate-Coconut 35g: ฿60/pc
 
-2. SBL Mineral Water 0.5L PET
-   Big Wholesale 500+: ฿44 | Small Wholesale 40-499: ฿48 | Credit 15 days: ฿50 | Retail: ฿55
-   Pack: 20 bottles | Shelf life: 24 months
+TASKS: Lead generation, bilingual outreach emails (English+Thai), sales proposals, follow-ups, lead qualification, pipeline tracking, deal closing.
+SLACK FORMAT: Use *bold*, bullets, emojis. Keep responses concise.
+LANGUAGE: English default, switch to Thai if user writes Thai.`;
 
-━━ FITNESSHOCK PROTEIN BROWNIES (50g) ━━
-3. Cookie Cream Brownie — ฿75/pc | Showbox 12 | P:7.5g F:17g C:10g 233kcal
-4. Banana Chocolate Brownie — ฿75/pc | Showbox 10 | P:7.5g F:17g C:10g 233kcal
-5. Hot Chocolate Brownie — ฿75/pc | Showbox 12 | P:7.5g F:17g C:10g 233kcal
-6. Coconut Pie Brownie — ฿75/pc | Showbox 10 | P:7.5g F:17g C:10g 233kcal
+const conversations = new Map();
+const processed = new Set();
+let BOT_ID = null;
 
-━━ SHOCKS! COATED BARS (50g) ━━
-7. SHOCKS! Pistachio Coated Bar — ฿65/pc | Showbox 12 | P:10g F:15g C:5g Fiber:14g
-8. SHOCKS! Peanut Coated Bar — ฿65/pc | Showbox 12 | P:10g F:13g C:5g Fiber:14g
-
-━━ FITNESSHOCK DESSERT UNCOATED BARS (60g) ━━
-9. Banana Dessert Bar — ฿75/pc | Showbox 12 | P:20g F:4.8g C:4.4g 175kcal
-10. Pistachio Dessert Bar — ฿75/pc | Showbox 12 | P:20g F:4.8g C:4g 173kcal
-
-━━ NEW GLAZED BARS (35g) ━━
-11. Milk Caramel-Coconut Glazed Bar — ฿60/pc | Showbox 12 | P:2.1g F:10.2g C:2.8g 138kcal
-12. Chocolate-Coconut Glazed Bar — ฿60/pc | Showbox 12 | P:2.1g F:10.2g C:2.8g 138kcal
-
-ALL FITNESSHOCK: No added sugar. Great for gyms, health stores, pharmacies, modern trade.
-
-SALES TASKS: Lead generation, outreach emails (English+Thai), sales proposals, follow-ups, lead qualification, pipeline tracking, deal closing, revenue target planning.
-
-SLACK FORMAT: Use *bold*, bullet points, emojis. Keep responses concise and scannable.
-LANGUAGE: English default, switch to Thai if user writes Thai. Use ฿ for Baht.
-TONE: Warm, professional, consultative — always push toward next step and closing.`;
-
-// ── Verify Slack signature ────────────────────────────────────
 function verifySignature(req) {
   const secret = process.env.SLACK_SIGNING_SECRET;
   if (!secret) return true;
@@ -75,158 +46,122 @@ function verifySignature(req) {
   const sig = req.headers['x-slack-signature'];
   if (!ts || !sig) return true;
   if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
-  const base = `v0:${ts}:${req.rawBody}`;
-  const mine = 'v0=' + crypto.createHmac('sha256', secret).update(base).digest('hex');
-  try { return crypto.timingSafeEqual(Buffer.from(mine), Buffer.from(sig)); }
-  catch { return false; }
+  const mine = 'v0=' + crypto.createHmac('sha256', secret).update(`v0:${ts}:${req.rawBody}`).digest('hex');
+  try { return crypto.timingSafeEqual(Buffer.from(mine), Buffer.from(sig)); } catch { return false; }
 }
 
-// ── Call Claude API ───────────────────────────────────────────
 async function callClaude(messages) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      system: FELIX_SYSTEM,
-      messages
-    })
+    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1024, system: FELIX_SYSTEM, messages })
   });
   const data = await res.json();
-  return data.content?.map(b => b.text || '').join('') || 'Sorry, I could not generate a response.';
+  return data.content?.map(b => b.text || '').join('') || 'Sorry, something went wrong.';
 }
 
-// ── Post to Slack ─────────────────────────────────────────────
-async function postToSlack(channel, text, threadTs = null) {
+async function slackPost(channel, text, thread_ts) {
   const body = { channel, text };
-  if (threadTs) body.thread_ts = threadTs;
+  if (thread_ts) body.thread_ts = thread_ts;
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` },
     body: JSON.stringify(body)
   });
   return res.json();
 }
 
-// ── Delete a Slack message ────────────────────────────────────
-async function deleteSlackMsg(channel, ts) {
+async function slackDelete(channel, ts) {
   await fetch('https://slack.com/api/chat.delete', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`
-    },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` },
     body: JSON.stringify({ channel, ts })
   });
 }
 
-// ── Get bot user ID ───────────────────────────────────────────
-let BOT_ID = null;
 async function getBotId() {
   if (BOT_ID) return BOT_ID;
-  const res = await fetch('https://slack.com/api/auth.test', {
-    headers: { 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` }
-  });
-  const data = await res.json();
-  BOT_ID = data.user_id;
+  const res = await fetch('https://slack.com/api/auth.test', { headers: { 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}` } });
+  const d = await res.json();
+  BOT_ID = d.user_id;
   return BOT_ID;
 }
 
-// ── Slack Events endpoint ─────────────────────────────────────
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok', agent: 'Felix', company: 'SBL IT Platforms Co., Ltd.' }));
+
+// Slack events
 app.post('/slack/events', async (req, res) => {
   if (!verifySignature(req)) return res.status(401).send('Unauthorized');
 
   const body = req.body;
 
-  // ✅ URL verification challenge — respond immediately
-  if (body.type === 'url_verification') {
-    console.log('Challenge received:', body.challenge);
-    return res.status(200).json({ challenge: body.challenge });
+  // URL verification - THIS MUST WORK
+  if (body && body.type === 'url_verification') {
+    console.log('✅ Challenge received:', body.challenge);
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).send(JSON.stringify({ challenge: body.challenge }));
   }
 
-  // Acknowledge immediately
   res.status(200).send('OK');
 
-  const event = body.event;
+  const event = body && body.event;
   if (!event || event.type !== 'message' || event.subtype || event.bot_id) return;
 
-  // Deduplicate
   const key = event.client_msg_id || event.ts;
-  if (processedEvents.has(key)) return;
-  processedEvents.add(key);
-  setTimeout(() => processedEvents.delete(key), 60000);
+  if (processed.has(key)) return;
+  processed.add(key);
+  setTimeout(() => processed.delete(key), 60000);
 
   const botId = await getBotId();
-  const isMentioned = event.text?.includes(`<@${botId}>`);
+  const isMentioned = event.text && event.text.includes(`<@${botId}>`);
   const isDM = event.channel_type === 'im';
   if (!isMentioned && !isDM) return;
 
   const channel = event.channel;
   const threadTs = event.thread_ts || event.ts;
-  const userText = event.text?.replace(/<@[A-Z0-9]+>/g, '').trim() || '';
+  const text = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
 
-  if (!userText) {
-    await postToSlack(channel,
-      `*สวัสดีครับ!* 👋 I'm *Felix*, Sales Agent for SBL IT Platforms.\n\nTry:\n• \`@Felix generate leads\`\n• \`@Felix write outreach email\`\n• \`@Felix create sales proposal\`\n• \`@Felix how to hit ฿250k this month\``,
-      threadTs);
+  if (!text) {
+    await slackPost(channel, `*สวัสดีครับ!* 👋 I'm *Felix*, Sales Agent for SBL IT Platforms!\n\n• \`@Felix generate leads\`\n• \`@Felix write outreach email\`\n• \`@Felix create sales proposal\`\n• \`@Felix hit ฿250k target\``, threadTs);
     return;
   }
 
   const convKey = isDM ? event.user : `${channel}:${threadTs}`;
   if (!conversations.has(convKey)) conversations.set(convKey, []);
-  const history = conversations.get(convKey);
-  history.push({ role: 'user', content: userText });
-  if (history.length > 20) history.splice(0, history.length - 20);
+  const hist = conversations.get(convKey);
+  hist.push({ role: 'user', content: text });
+  if (hist.length > 20) hist.splice(0, hist.length - 20);
 
-  const typing = await postToSlack(channel, '_Felix is thinking... 🤔_', threadTs);
-
+  const typing = await slackPost(channel, '_Felix is thinking... 🤔_', threadTs);
   try {
-    const reply = await callClaude(history);
-    history.push({ role: 'assistant', content: reply });
-    if (typing?.ts) await deleteSlackMsg(channel, typing.ts);
-    await postToSlack(channel, reply, threadTs);
+    const reply = await callClaude(hist);
+    hist.push({ role: 'assistant', content: reply });
+    if (typing && typing.ts) await slackDelete(channel, typing.ts);
+    await slackPost(channel, reply, threadTs);
   } catch (err) {
-    console.error('Claude error:', err);
-    if (typing?.ts) await deleteSlackMsg(channel, typing.ts);
-    await postToSlack(channel, '⚠️ Something went wrong. Please try again.', threadTs);
+    console.error(err);
+    if (typing && typing.ts) await slackDelete(channel, typing.ts);
+    await slackPost(channel, '⚠️ Error. Please try again.', threadTs);
   }
 });
 
-// ── Slash command /felix ──────────────────────────────────────
+// Slash command
 app.post('/slack/commands', async (req, res) => {
   const params = new URLSearchParams(req.rawBody);
-  const text = params.get('text') || '';
+  const text = params.get('text') || 'Hello';
   const channel_id = params.get('channel_id') || '';
   const user_id = params.get('user_id') || '';
-
-  res.json({ response_type: 'in_channel', text: `_Felix is on it: "${text || 'hello'}"..._` });
-
+  res.json({ response_type: 'in_channel', text: `_Felix is working on it..._` });
   const convKey = `cmd:${user_id}`;
   if (!conversations.has(convKey)) conversations.set(convKey, []);
-  const history = conversations.get(convKey);
-  history.push({ role: 'user', content: text || 'Hello, introduce yourself' });
-  if (history.length > 20) history.splice(0, history.length - 20);
-
+  const hist = conversations.get(convKey);
+  hist.push({ role: 'user', content: text });
   try {
-    const reply = await callClaude(history);
-    history.push({ role: 'assistant', content: reply });
-    await postToSlack(channel_id, `*Felix:* ${reply}`);
-  } catch (err) {
-    await postToSlack(channel_id, '⚠️ Felix error. Please try again.');
-  }
-});
-
-// ── Health check ──────────────────────────────────────────────
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', agent: 'Felix', company: 'SBL IT Platforms Co., Ltd.' });
+    const reply = await callClaude(hist);
+    hist.push({ role: 'assistant', content: reply });
+    await slackPost(channel_id, `*Felix:* ${reply}`);
+  } catch { await slackPost(channel_id, '⚠️ Error. Please try again.'); }
 });
 
 app.listen(PORT, () => console.log(`🤖 Felix running on port ${PORT}`));
