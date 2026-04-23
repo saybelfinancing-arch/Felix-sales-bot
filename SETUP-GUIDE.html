@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Felix Slack Bot — Setup Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#0a0a0f; --surface:#111118; --surface2:#16161f; --border:rgba(255,255,255,0.07); --text:#e8e8f0; --muted:#6b6b80; --sales:#ff6b35; --sales-dim:rgba(255,107,53,0.1); --green:#22c55e; --blue:#3b82f6; --yellow:#f59e0b; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Syne',sans-serif; line-height:1.6; }
+  .wrap { max-width:860px; margin:0 auto; padding:48px 24px; }
+
+  h1 { font-size:40px; font-weight:800; letter-spacing:-2px; background:linear-gradient(135deg,#fff 30%,#6b6b80); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; margin-bottom:6px; }
+  .subtitle { font-family:'Space Mono',monospace; font-size:10px; color:var(--muted); letter-spacing:2px; text-transform:uppercase; margin-bottom:48px; }
+
+  .step { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px; margin-bottom:20px; position:relative; overflow:hidden; }
+  .step::before { content:''; position:absolute; top:0; left:0; width:3px; height:100%; background:var(--sales); }
+  .step-num { font-family:'Space Mono',monospace; font-size:9px; color:var(--sales); letter-spacing:2px; text-transform:uppercase; margin-bottom:8px; }
+  .step h2 { font-size:18px; font-weight:700; letter-spacing:-0.5px; margin-bottom:14px; }
+  .step p { font-size:13px; color:#a0a0b8; line-height:1.7; margin-bottom:10px; }
+  .step p:last-child { margin-bottom:0; }
+
+  .code-block { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px; font-family:'Space Mono',monospace; font-size:12px; color:#c0ffd0; overflow-x:auto; margin:12px 0; line-height:1.6; }
+  .comment { color:var(--muted); }
+  .key { color:#ff6b35; }
+  .val { color:#22d3ee; }
+
+  .pill { display:inline-block; font-family:'Space Mono',monospace; font-size:9px; padding:3px 9px; border-radius:5px; letter-spacing:1px; text-transform:uppercase; margin:2px; }
+  .pill-green { background:rgba(34,197,94,0.12); color:var(--green); border:1px solid rgba(34,197,94,0.2); }
+  .pill-blue { background:rgba(59,130,246,0.12); color:var(--blue); border:1px solid rgba(59,130,246,0.2); }
+  .pill-yellow { background:rgba(245,158,11,0.12); color:var(--yellow); border:1px solid rgba(245,158,11,0.2); }
+  .pill-sales { background:var(--sales-dim); color:var(--sales); border:1px solid rgba(255,107,53,0.2); }
+
+  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:13px; }
+  th { text-align:left; font-family:'Space Mono',monospace; font-size:8px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); padding:8px 10px; border-bottom:1px solid var(--border); }
+  td { padding:9px 10px; border-bottom:1px solid rgba(255,255,255,0.04); color:#c0c0d0; vertical-align:top; }
+  td:first-child { color:var(--text); font-weight:600; white-space:nowrap; }
+
+  .usage-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px; margin:10px 0; }
+  .usage-title { font-size:12px; font-weight:700; color:var(--sales); margin-bottom:8px; font-family:'Space Mono',monospace; letter-spacing:1px; }
+  .usage-ex { font-family:'Space Mono',monospace; font-size:11px; color:#c0ffd0; background:var(--bg); padding:8px 12px; border-radius:6px; margin-top:6px; }
+
+  .alert { background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.2); border-radius:10px; padding:14px 16px; margin:14px 0; font-size:13px; color:#e0c070; }
+  .alert strong { color:var(--yellow); }
+
+  .done { background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.2); border-radius:10px; padding:16px; margin-top:28px; text-align:center; }
+  .done h3 { font-size:18px; font-weight:700; color:var(--green); margin-bottom:6px; }
+  .done p { font-size:13px; color:#a0a0b8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Felix Slack Bot</h1>
+  <div class="subtitle">Setup Guide · SBL IT Platforms Co., Ltd. · Sales Agent</div>
+
+  <!-- STEP 1 -->
+  <div class="step">
+    <div class="step-num">Step 01</div>
+    <h2>Create a Slack App</h2>
+    <p>Go to <strong style="color:#fff">https://api.slack.com/apps</strong> and click <strong style="color:#fff">Create New App → From Scratch</strong>.</p>
+    <p>Name it <strong style="color:var(--sales)">Felix</strong> and select your SBL IT Platforms workspace.</p>
+    <p>Then configure the following permissions under <strong style="color:#fff">OAuth & Permissions → Bot Token Scopes</strong>:</p>
+    <table>
+      <tr><th>Scope</th><th>Why needed</th></tr>
+      <tr><td>chat:write</td><td>Post messages as Felix</td></tr>
+      <tr><td>chat:write.public</td><td>Post to channels without being invited</td></tr>
+      <tr><td>channels:history</td><td>Read channel messages</td></tr>
+      <tr><td>im:history</td><td>Read direct messages</td></tr>
+      <tr><td>im:write</td><td>Send DMs to users</td></tr>
+      <tr><td>app_mentions:read</td><td>Detect when @Felix is mentioned</td></tr>
+      <tr><td>commands</td><td>Enable /felix slash command</td></tr>
+    </table>
+    <p>Click <strong style="color:#fff">Install to Workspace</strong> and copy your <strong style="color:var(--sales)">Bot User OAuth Token</strong> (starts with <code>xoxb-</code>).</p>
+    <p>Also copy the <strong style="color:var(--sales)">Signing Secret</strong> from Basic Information.</p>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step">
+    <div class="step-num">Step 02</div>
+    <h2>Deploy Felix to Railway (free)</h2>
+    <p>Railway is the easiest way to host Felix's backend. Go to <strong style="color:#fff">https://railway.app</strong> and sign up free.</p>
+    <p><strong style="color:#fff">Option A — Deploy from GitHub (recommended):</strong></p>
+    <div class="code-block">
+<span class="comment"># 1. Create a GitHub repo and push the felix-slack-bot folder</span>
+git init
+git add .
+git commit -m "Felix Sales Bot v1.0"
+git remote add origin https://github.com/YOUR_USERNAME/felix-slack-bot.git
+git push -u origin main
+    </div>
+    <p>Then in Railway: <strong style="color:#fff">New Project → Deploy from GitHub repo</strong> → select your repo.</p>
+    <p><strong style="color:#fff">Option B — Deploy from local folder:</strong></p>
+    <div class="code-block">
+<span class="comment"># Install Railway CLI</span>
+npm install -g @railway/cli
+
+<span class="comment"># Login and deploy from the felix-slack-bot folder</span>
+cd felix-slack-bot
+railway login
+railway init
+railway up
+    </div>
+    <p>After deploy, Railway gives you a public URL like: <code style="color:var(--green)">https://felix-slack-bot.up.railway.app</code></p>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step">
+    <div class="step-num">Step 03</div>
+    <h2>Set Environment Variables</h2>
+    <p>In Railway → your project → <strong style="color:#fff">Variables</strong>, add these three:</p>
+    <div class="code-block">
+<span class="key">ANTHROPIC_API_KEY</span>   = <span class="val">sk-ant-your-key-from-console.anthropic.com</span>
+<span class="key">SLACK_BOT_TOKEN</span>     = <span class="val">xoxb-your-bot-token-from-slack</span>
+<span class="key">SLACK_SIGNING_SECRET</span> = <span class="val">your-signing-secret-from-slack</span>
+    </div>
+    <div class="alert"><strong>⚠️ Security:</strong> Never share these values publicly or commit them to Git. The .env.example file is safe to commit — your actual .env file is not.</div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="step">
+    <div class="step-num">Step 04</div>
+    <h2>Connect Slack to Your Server</h2>
+    <p>Back in your Slack App settings:</p>
+    <p><strong style="color:#fff">1. Event Subscriptions</strong> → Enable Events → Request URL:</p>
+    <div class="code-block">https://felix-slack-bot.up.railway.app/slack/events</div>
+    <p>Slack will send a challenge — your server responds automatically. You'll see a green ✓.</p>
+    <p>Subscribe to these <strong style="color:#fff">Bot Events</strong>:</p>
+    <div style="margin:8px 0">
+      <span class="pill pill-blue">message.channels</span>
+      <span class="pill pill-blue">message.im</span>
+      <span class="pill pill-blue">app_mention</span>
+    </div>
+    <p><strong style="color:#fff">2. Slash Commands</strong> → Create New Command:</p>
+    <table>
+      <tr><th>Field</th><th>Value</th></tr>
+      <tr><td>Command</td><td>/felix</td></tr>
+      <tr><td>Request URL</td><td>https://felix-slack-bot.up.railway.app/slack/commands</td></tr>
+      <tr><td>Description</td><td>Talk to Felix, your SBL Sales Agent</td></tr>
+      <tr><td>Usage hint</td><td>generate leads | write proposal | follow up</td></tr>
+    </table>
+    <p><strong style="color:#fff">3. Reinstall your app</strong> to apply all changes — click <strong style="color:#fff">Reinstall to Workspace</strong>.</p>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="step">
+    <div class="step-num">Step 05</div>
+    <h2>Add Felix to Your Sales Channel</h2>
+    <p>In Slack, create a channel called <strong style="color:var(--sales)">#felix-sales</strong> (or any name you like).</p>
+    <p>Then type in the channel:</p>
+    <div class="code-block">/invite @Felix</div>
+    <p>Felix is now a member of the channel and will respond to any message that mentions him.</p>
+  </div>
+
+  <!-- HOW TO USE -->
+  <div class="step">
+    <div class="step-num">How to Use</div>
+    <h2>Talking to Felix in Slack</h2>
+
+    <div class="usage-card">
+      <div class="usage-title">📣 Mention in a channel</div>
+      <p style="font-size:12px;color:var(--muted)">Type @Felix followed by your request in any channel Felix is a member of.</p>
+      <div class="usage-ex">@Felix generate 5 new leads for FitnesShock bars in Bangkok</div>
+      <div class="usage-ex">@Felix write a follow-up email in Thai for the gym we contacted last week</div>
+      <div class="usage-ex">@Felix create a sales proposal for a pharmacy chain — 200 bars/month</div>
+    </div>
+
+    <div class="usage-card">
+      <div class="usage-title">⚡ Slash command from anywhere</div>
+      <p style="font-size:12px;color:var(--muted)">Use /felix from any channel — no need to invite Felix first.</p>
+      <div class="usage-ex">/felix show full price list</div>
+      <div class="usage-ex">/felix how do I hit ฿250,000 this month?</div>
+      <div class="usage-ex">/felix draft outreach email for convenience store chain</div>
+    </div>
+
+    <div class="usage-card">
+      <div class="usage-title">💬 Direct Message</div>
+      <p style="font-size:12px;color:var(--muted)">DM Felix directly for private conversations. He remembers the thread context.</p>
+      <div class="usage-ex">qualify this lead: hotel chain, 10 locations, wants water for rooms</div>
+      <div class="usage-ex">what's our best margin product right now?</div>
+    </div>
+
+    <div class="usage-card">
+      <div class="usage-title">🧵 Thread replies</div>
+      <p style="font-size:12px;color:var(--muted)">Felix maintains conversation context within a thread — perfect for back-and-forth on a deal.</p>
+      <div class="usage-ex">@Felix [in a thread] now make it shorter and add Thai version</div>
+    </div>
+  </div>
+
+  <!-- FILES -->
+  <div class="step">
+    <div class="step-num">Files Included</div>
+    <h2>What's in the felix-slack-bot folder</h2>
+    <table>
+      <tr><th>File</th><th>Purpose</th></tr>
+      <tr><td>index.js</td><td>Main server — handles all Slack events, calls Claude API, posts replies</td></tr>
+      <tr><td>package.json</td><td>Node.js dependencies (only needs express)</td></tr>
+      <tr><td>.env.example</td><td>Template for your environment variables</td></tr>
+      <tr><td>Procfile</td><td>Tells Railway/Render how to start the server</td></tr>
+      <tr><td>.gitignore</td><td>Keeps your .env and node_modules out of Git</td></tr>
+    </table>
+  </div>
+
+  <div class="done">
+    <h3>✅ Felix is ready for your sales team!</h3>
+    <p>Once deployed, your whole team can @mention Felix in Slack to generate leads, get proposals, draft emails, and track pipeline — all in one place.</p>
+  </div>
+
+</div>
+</body>
+</html>
