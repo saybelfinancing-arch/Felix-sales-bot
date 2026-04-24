@@ -88,8 +88,16 @@ const AGENTS = {
 function getAgentFromChannel(channelName) {
   if (!channelName) return 'felix';
   const lower = channelName.toLowerCase();
-  if (lower.includes('alexey') || lower.includes('partners') || lower.includes('алексей')) return 'alexey';
-  return 'felix'; // default
+  if (
+    lower.includes('alexey') ||
+    lower.includes('partners') ||
+    lower.includes('алексей') ||
+    lower.includes('российский') ||
+    lower.includes('россия') ||
+    lower.includes('экспорт') ||
+    lower.includes('russian')
+  ) return 'alexey';
+  return 'felix';
 }
 
 // Store channel names cache
