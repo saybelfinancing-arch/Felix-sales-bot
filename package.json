@@ -1,19 +1,12 @@
 {
   "name": "felix-slack-bot",
-  "version": "1.0.0",
-  "description": "Felix — AI Sales Agent Slack Bot for SBL IT Platforms Co., Ltd.",
+  "version": "2.0.0",
+  "description": "Felix — Sales Agent with Gmail for SBL IT Platforms Co., Ltd.",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
-  },
+  "scripts": { "start": "node index.js" },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.8"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "engines": { "node": ">=18.0.0" }
 }
