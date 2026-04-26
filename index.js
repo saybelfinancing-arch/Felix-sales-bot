@@ -6,21 +6,49 @@ const ANTHROPIC_KEY = (process.env.ANTHROPIC_API_KEY || '').replace(/\s+/g, '').
 const SLACK_TOKEN = (process.env.SLACK_BOT_TOKEN || '').replace(/\s+/g, '').trim();
 const GMAIL_USER = process.env.GMAIL_USER || 'saybelfinancing@gmail.com';
 const GMAIL_PASS = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s/g, '');
-const GOOGLE_SERVICE_ACCOUNT = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
+// Google credentials — stored as individual variables to avoid JSON parsing issues
+function getGoogleCredentials() {
+  // Try full JSON first
+  const fullJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (fullJson && fullJson.includes('private_key')) {
+    try { return JSON.parse(fullJson); } catch(e) {}
+  }
+  // Fall back to individual variables
+  return {
+    type: 'service_account',
+    project_id: process.env.GOOGLE_PROJECT_ID || 'felix-sbl',
+    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID || '',
+    private_key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    client_email: process.env.GOOGLE_CLIENT_EMAIL || 'felix-service@felix-sbl.iam.gserviceaccount.com',
+    client_id: process.env.GOOGLE_CLIENT_ID_SA || '',
+    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: 'https://oauth2.googleapis.com/token'
+  };
+}
 
 app.use((req, res, next) => {
   req.rawBody = '';
   req.on('data', chunk => { req.rawBody += chunk.toString(); });
   req.on('end', () => {
-    try { req.body = req.rawBody ? JSON.parse(req.rawBody) : {}; }
-    catch { req.body = {}; }
+    if (req.rawBody && req.rawBody.trim()) {
+      try { req.body = JSON.parse(req.rawBody); }
+      catch (e) { 
+        // Try to parse as URL-encoded form data
+        try {
+          const params = new URLSearchParams(req.rawBody);
+          req.body = Object.fromEntries(params);
+        } catch { req.body = {}; }
+      }
+    } else {
+      req.body = {};
+    }
     next();
   });
 });
 
 // ── Google Auth ───────────────────────────────────────────────
 async function getGoogleToken() {
-  const credentials = JSON.parse(GOOGLE_SERVICE_ACCOUNT);
+  const credentials = getGoogleCredentials();
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({
@@ -278,7 +306,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok', agent: 'Felix',
     gmail: GMAIL_PASS ? 'connected' : 'not configured',
-    googleDrive: GOOGLE_SERVICE_ACCOUNT ? 'connected' : 'not configured',
+    googleDrive: (process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_PRIVATE_KEY) ? 'connected' : 'not configured',
     company: 'SBL IT Platforms Co., Ltd.'
   });
 });
