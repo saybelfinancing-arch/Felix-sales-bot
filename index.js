@@ -436,7 +436,7 @@ async function claude(messages) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1024, system: FELIX_SYSTEM, messages })
+    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 8192, system: FELIX_SYSTEM, messages })
   });
   const d = await r.json();
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${d.error?.message}`);
