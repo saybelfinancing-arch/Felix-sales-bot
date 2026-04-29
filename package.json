@@ -1,12 +1,15 @@
 {
   "name": "felix-slack-bot",
   "version": "2.0.0",
-  "description": "Felix — Sales Agent with Gmail for SBL IT Platforms Co., Ltd.",
+  "description": "Felix — Sales Agent with Gmail + Google Drive + File Reading for SBL IT Platforms",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
   "dependencies": {
     "express": "^4.18.2",
-    "nodemailer": "^6.9.8"
+    "nodemailer": "^6.9.8",
+    "pdf-parse": "^1.1.1",
+    "exceljs": "^4.3.0",
+    "mammoth": "^1.6.0"
   },
   "engines": { "node": ">=18.0.0" }
 }
