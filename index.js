@@ -314,7 +314,8 @@ app.post('/slack/events', async (req, res) => {
   res.status(200).end('OK');
 
   const event = body?.event;
-  if (!event || event.type !== 'message' || event.subtype || event.bot_id) return;
+  if (!event || event.type !== 'message' || event.bot_id) return;
+  if (event.subtype && event.subtype !== 'file_share') return;
 
   const key = event.client_msg_id || event.ts;
   if (processed.has(key)) return;
