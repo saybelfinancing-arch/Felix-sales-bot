@@ -1,175 +1,28 @@
+'use strict';
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-const ANTHROPIC_KEY = (process.env.ANTHROPIC_API_KEY || '').replace(/\s+/g, '').trim();
-const SLACK_TOKEN = (process.env.SLACK_BOT_TOKEN || '').replace(/\s+/g, '').trim();
+const ANTHROPIC_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
+const SLACK_TOKEN = (process.env.SLACK_BOT_TOKEN || '').trim();
 const GMAIL_USER = process.env.GMAIL_USER || 'saybelfinancing@gmail.com';
 const GMAIL_PASS = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s/g, '');
-// ── File processing ───────────────────────────────────────────
-async function downloadSlackFile(url) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${SLACK_TOKEN}` } });
-  if (!r.ok) throw new Error(`Cannot download file: ${r.status}`);
-  return Buffer.from(await r.arrayBuffer());
-}
-
-async function processFile(file) {
-  const buf = await downloadSlackFile(file.url_private);
-  const mime = file.mimetype || '';
-  const name = file.name || '';
-  if (mime === 'application/pdf' || name.endsWith('.pdf')) {
-    const pdfParse = require('pdf-parse');
-    const d = await pdfParse(buf);
-    return { type: 'pdf', content: d.text.substring(0, 10000), name };
-  }
-  if (mime.includes('spreadsheet') || mime.includes('excel') || name.endsWith('.xlsx') || name.endsWith('.xls')) {
-    const ExcelJS = require('exceljs');
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(buf);
-    let text = '';
-    wb.eachSheet(s => { s.eachRow(r => { text += r.values.slice(1).map(v => v || '').join('\t') + '\n'; }); });
-    return { type: 'excel', content: text.substring(0, 10000), name };
-  }
-  if (mime.includes('word') || name.endsWith('.docx') || name.endsWith('.doc')) {
-    const mammoth = require('mammoth');
-    return { type: 'word', content: (await mammoth.extractRawText({ buffer: buf })).value.substring(0, 10000), name };
-  }
-  if (mime.startsWith('image/')) {
-    return { type: 'image', content: buf.toString('base64'), mimetype: mime, name };
-  }
-  return null;
-}
-
-// Google credentials — stored as individual variables to avoid JSON parsing issues
-function getGoogleCredentials() {
-  // Try full JSON first
-  const fullJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (fullJson && fullJson.includes('private_key')) {
-    try { return JSON.parse(fullJson); } catch(e) {}
-  }
-  // Fall back to individual variables
-  return {
-    type: 'service_account',
-    project_id: process.env.GOOGLE_PROJECT_ID || 'felix-sbl',
-    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID || '',
-    private_key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    client_email: process.env.GOOGLE_CLIENT_EMAIL || 'felix-service@felix-sbl.iam.gserviceaccount.com',
-    client_id: process.env.GOOGLE_CLIENT_ID_SA || '',
-    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-    token_uri: 'https://oauth2.googleapis.com/token'
-  };
-}
+const OAUTH_REFRESH_TOKEN = (process.env.GOOGLE_OAUTH_REFRESH_TOKEN || '').trim();
+const OAUTH_CLIENT_ID = (process.env.GMAIL_CLIENT_ID || '').trim();
+const OAUTH_CLIENT_SECRET = (process.env.GMAIL_CLIENT_SECRET || '').trim();
+const DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID || '';
 
 app.use((req, res, next) => {
   req.rawBody = '';
   req.on('data', chunk => { req.rawBody += chunk.toString(); });
   req.on('end', () => {
-    if (req.rawBody && req.rawBody.trim()) {
-      try { req.body = JSON.parse(req.rawBody); }
-      catch (e) { 
-        // Try to parse as URL-encoded form data
-        try {
-          const params = new URLSearchParams(req.rawBody);
-          req.body = Object.fromEntries(params);
-        } catch { req.body = {}; }
-      }
-    } else {
-      req.body = {};
-    }
+    try { req.body = req.rawBody ? JSON.parse(req.rawBody) : {}; }
+    catch { req.body = {}; }
     next();
   });
 });
 
-// ── Google Auth ───────────────────────────────────────────────
-async function getGoogleToken() {
-  const credentials = getGoogleCredentials();
-  const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({
-    iss: credentials.client_email,
-    scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now
-  })).toString('base64url');
-
-  const { createSign } = await import('node:crypto');
-  const sign = createSign('RSA-SHA256');
-  sign.update(`${header}.${payload}`);
-  const signature = sign.sign(credentials.private_key, 'base64url');
-  const jwt = `${header}.${payload}.${signature}`;
-
-  const r = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt })
-  });
-  const d = await r.json();
-  if (!d.access_token) throw new Error('Google auth failed: ' + JSON.stringify(d));
-  return d.access_token;
-}
-
-// ── Google Drive: List files ──────────────────────────────────
-async function listDriveFiles(query = '') {
-  const token = await getGoogleToken();
-  const q = query ? `name contains '${query}'` : '';
-  const url = `https://www.googleapis.com/drive/v3/files?pageSize=20&fields=files(id,name,mimeType,modifiedTime)${q ? '&q=' + encodeURIComponent(q) : ''}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  const d = await r.json();
-  return d.files || [];
-}
-
-// ── Google Sheets: Read ───────────────────────────────────────
-async function readSheet(spreadsheetId, range = 'Sheet1') {
-  const token = await getGoogleToken();
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  const d = await r.json();
-  return d.values || [];
-}
-
-// ── Google Sheets: Write ──────────────────────────────────────
-async function writeSheet(spreadsheetId, range, values) {
-  const token = await getGoogleToken();
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values })
-    }
-  );
-  return r.json();
-}
-
-// ── Google Sheets: Append ─────────────────────────────────────
-async function appendSheet(spreadsheetId, range, values) {
-  const token = await getGoogleToken();
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values })
-    }
-  );
-  return r.json();
-}
-
-// ── Google Sheets: Create new spreadsheet ────────────────────
-async function createSheet(title) {
-  const token = await getGoogleToken();
-  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ properties: { title } })
-  });
-  return r.json();
-}
-
-// ── Send Email ────────────────────────────────────────────────
+// ── Gmail ─────────────────────────────────────────────────────
 async function sendEmail(to, subject, body) {
   const nodemailer = require('nodemailer');
   const transporter = nodemailer.createTransport({
@@ -182,9 +35,147 @@ async function sendEmail(to, subject, body) {
   });
 }
 
+// ── OAuth Token ───────────────────────────────────────────────
+let cachedToken = null;
+let tokenExpiry = 0;
+
+async function getOAuthToken() {
+  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      refresh_token: OAUTH_REFRESH_TOKEN,
+      grant_type: 'refresh_token'
+    })
+  });
+  const d = await r.json();
+  if (!d.access_token) throw new Error('OAuth failed: ' + JSON.stringify(d));
+  cachedToken = d.access_token;
+  tokenExpiry = Date.now() + 3500000;
+  return cachedToken;
+}
+
+// ── Google Sheets via OAuth ───────────────────────────────────
+async function createSheet(title) {
+  const token = await getOAuthToken();
+  const metadata = { name: title, mimeType: 'application/vnd.google-apps.spreadsheet' };
+  if (DRIVE_FOLDER_ID) metadata.parents = [DRIVE_FOLDER_ID];
+  const r = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(metadata)
+  });
+  const d = await r.json();
+  if (!d.id) throw new Error('Failed to create sheet: ' + JSON.stringify(d));
+  return d.id;
+}
+
+async function readSheet(id, range) {
+  const token = await getOAuthToken();
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range || 'Sheet1')}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return (await r.json()).values || [];
+}
+
+async function appendSheet(id, range, values) {
+  const token = await getOAuthToken();
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values })
+    }
+  );
+}
+
+async function listDriveFiles(query) {
+  const token = await getOAuthToken();
+  const q = query ? `name contains '${query}'` : '';
+  const url = `https://www.googleapis.com/drive/v3/files?pageSize=20&fields=files(id,name,mimeType)${q ? '&q=' + encodeURIComponent(q) : ''}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  return (await r.json()).files || [];
+}
+
+// ── File Processing ───────────────────────────────────────────
+async function downloadFile(url) {
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${SLACK_TOKEN}` } });
+  if (!r.ok) throw new Error(`Cannot download: ${r.status}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+async function processFile(file) {
+  const buf = await downloadFile(file.url_private);
+  const mime = file.mimetype || '';
+  const name = file.name || '';
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) {
+    const pdfParse = require('pdf-parse');
+    return { type: 'pdf', content: (await pdfParse(buf)).text.substring(0, 10000), name };
+  }
+  if (mime.includes('spreadsheet') || mime.includes('excel') || name.endsWith('.xlsx')) {
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    let text = '';
+    wb.eachSheet(s => { s.eachRow(r => { text += r.values.slice(1).join('\t') + '\n'; }); });
+    return { type: 'excel', content: text.substring(0, 10000), name };
+  }
+  if (mime.includes('word') || name.endsWith('.docx')) {
+    const mammoth = require('mammoth');
+    return { type: 'word', content: (await mammoth.extractRawText({ buffer: buf })).value.substring(0, 10000), name };
+  }
+  if (mime.startsWith('image/')) {
+    return { type: 'image', content: buf.toString('base64'), mimetype: mime, name };
+  }
+  return null;
+}
+
+// ── Command Parser ────────────────────────────────────────────
+function parseEmailCommand(text) {
+  const sendMatch = text.match(/\[SEND_EMAIL\]([\s\S]*?)\[\/SEND_EMAIL\]/);
+  const draftMatch = text.match(/\[DRAFT_EMAIL\]([\s\S]*?)\[\/DRAFT_EMAIL\]/);
+  if (sendMatch) {
+    const b = sendMatch[1];
+    return { action: 'send', to: b.match(/TO:\s*(.+)/)?.[1]?.trim(), subject: b.match(/SUBJECT:\s*(.+)/)?.[1]?.trim(), body: b.match(/BODY:\s*([\s\S]+)/)?.[1]?.trim(), raw: sendMatch[0] };
+  }
+  if (draftMatch) {
+    const b = draftMatch[1];
+    return { action: 'draft', to: b.match(/TO:\s*(.+)/)?.[1]?.trim(), subject: b.match(/SUBJECT:\s*(.+)/)?.[1]?.trim(), body: b.match(/BODY:\s*([\s\S]+)/)?.[1]?.trim(), raw: draftMatch[0] };
+  }
+  return null;
+}
+
+function parseGoogleCommand(text) {
+  const cmds = ['CREATE_SHEET','READ_SHEET','APPEND_SHEET','LIST_FILES'];
+  for (const cmd of cmds) {
+    const m = text.match(new RegExp(`\\[${cmd}\\]([\\s\\S]*?)\\[\\/${cmd}\\]`));
+    if (m) {
+      const block = m[1];
+      const result = { action: cmd, raw: m[0] };
+      const id = block.match(/ID:\s*(.+)/)?.[1]?.trim();
+      const range = block.match(/RANGE:\s*(.+)/)?.[1]?.trim();
+      const title = block.match(/TITLE:\s*(.+)/)?.[1]?.trim();
+      const query = block.match(/QUERY:\s*(.+)/)?.[1]?.trim();
+      const row = block.match(/ROW:\s*(.+)/)?.[1]?.trim();
+      if (id) result.id = id;
+      if (range) result.range = range;
+      if (title) result.title = title;
+      if (query) result.query = query;
+      if (row) result.row = row;
+      return result;
+    }
+  }
+  return null;
+}
+
 // ── Felix System Prompt ───────────────────────────────────────
 const FELIX_SYSTEM = `You are Felix, the B2B Sales AI Agent for SBL IT Platforms Co., Ltd.
-You have FULL access to Gmail and Google Drive/Sheets.
+You can send emails, read files, and create/read Google Sheets.
 
 COMPANY: SBL IT PLATFORMS CO., LTD. | www.sblplat.co.th | www.sblplat.store
 TARGETS: Revenue ฿250,000/month | New B2B Clients: 10-20/month
@@ -197,9 +188,13 @@ PRODUCTS:
 - FitnesShock Dessert Bars 60g: ฿75/pc — 20g protein!
 - NEW Glazed Bars 35g: ฿60/pc
 
-COMMANDS — use these exact formats when needed:
+FILE ANALYSIS: When files are attached, analyze them thoroughly:
+- Excel: read all data, identify leads, prices, contacts
+- PDF: extract key info, summarize findings
+- Word: read content and provide insights
+- Images: describe and analyze visually
 
-EMAIL:
+EMAIL COMMANDS:
 [DRAFT_EMAIL]
 TO: email@domain.com
 SUBJECT: Subject
@@ -214,143 +209,111 @@ BODY:
 Body text
 [/SEND_EMAIL]
 
-GOOGLE DRIVE:
-[LIST_FILES]
-QUERY: search term (optional)
-[/LIST_FILES]
+GOOGLE SHEETS COMMANDS:
+[CREATE_SHEET]
+TITLE: Sheet name
+[/CREATE_SHEET]
 
 [READ_SHEET]
-ID: spreadsheet_id_here
+ID: spreadsheet_id
 RANGE: Sheet1!A1:Z100
 [/READ_SHEET]
 
-[WRITE_SHEET]
-ID: spreadsheet_id_here
-RANGE: Sheet1!A1
-DATA: value1,value2,value3
-[/WRITE_SHEET]
-
 [APPEND_SHEET]
-ID: spreadsheet_id_here
+ID: spreadsheet_id
 RANGE: Sheet1
-ROW: value1,value2,value3,value4
+ROW: value1,value2,value3
 [/APPEND_SHEET]
 
-[CREATE_SHEET]
-TITLE: New Spreadsheet Name
-[/CREATE_SHEET]
+[LIST_FILES]
+QUERY: search term
+[/LIST_FILES]
 
 RULES:
-- Always DRAFT emails first, then send only after user confirms with "yes send"
-- When reading sheets, summarize data clearly in Slack format
-- When writing data, confirm what you wrote
+- Always DRAFT emails first, send only after user confirms with "yes send"
+- When creating sheets, confirm with link
 - Sign emails: Felix | Sales Agent | SBL IT Platforms Co., Ltd.
 
-TASKS: Lead gen, proposals, outreach (EN+TH), pipeline tracking, reading/writing Google Sheets, sending emails.
-FORMAT: Slack markdown *bold*, • bullets, emojis. Always end with next step.
+TASKS: Lead generation, bilingual outreach (EN+TH), proposals, follow-ups, pipeline, file analysis.
+FORMAT: Slack *bold*, bullets, emojis. Always end with next step.
 LANGUAGE: English default, Thai if user writes Thai.`;
 
+// ── State ─────────────────────────────────────────────────────
 const conversations = new Map();
-const processed = new Set();
 const pendingDrafts = new Map();
+const processed = new Set();
 let BOT_ID = null;
 
-// ── Parse commands ────────────────────────────────────────────
-function parseCommand(text) {
-  const commands = ['SEND_EMAIL','DRAFT_EMAIL','LIST_FILES','READ_SHEET','WRITE_SHEET','APPEND_SHEET','CREATE_SHEET'];
-  for (const cmd of commands) {
-    const match = text.match(new RegExp(`\\[${cmd}\\]([\\s\\S]*?)\\[\\/${cmd}\\]`));
-    if (match) {
-      const block = match[1];
-      const result = { action: cmd.toLowerCase(), raw: match[0] };
-      const to = block.match(/TO:\s*(.+)/)?.[1]?.trim();
-      const subject = block.match(/SUBJECT:\s*(.+)/)?.[1]?.trim();
-      const body = block.match(/BODY:\s*([\s\S]+)/)?.[1]?.trim();
-      const id = block.match(/ID:\s*(.+)/)?.[1]?.trim();
-      const range = block.match(/RANGE:\s*(.+)/)?.[1]?.trim();
-      const query = block.match(/QUERY:\s*(.+)/)?.[1]?.trim();
-      const data = block.match(/DATA:\s*(.+)/)?.[1]?.trim();
-      const row = block.match(/ROW:\s*(.+)/)?.[1]?.trim();
-      const title = block.match(/TITLE:\s*(.+)/)?.[1]?.trim();
-      if (to) result.to = to;
-      if (subject) result.subject = subject;
-      if (body) result.body = body;
-      if (id) result.id = id;
-      if (range) result.range = range;
-      if (query) result.query = query;
-      if (data) result.data = data;
-      if (row) result.row = row;
-      if (title) result.title = title;
-      return result;
+// ── Claude ────────────────────────────────────────────────────
+async function claude(messages, fileData) {
+  let msgs = [...messages];
+  if (fileData) {
+    const last = msgs[msgs.length - 1];
+    if (fileData.type === 'image') {
+      msgs[msgs.length - 1] = {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: fileData.mimetype, data: fileData.content } },
+          { type: 'text', text: last.content + `\n\n[Image: ${fileData.name}]` }
+        ]
+      };
+    } else {
+      msgs[msgs.length - 1] = {
+        role: 'user',
+        content: `${last.content}\n\n[File: ${fileData.name} (${fileData.type.toUpperCase()})]\n${fileData.content}`
+      };
     }
   }
-  return null;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 8192, system: FELIX_SYSTEM, messages: msgs })
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(`Claude ${r.status}: ${d.error?.message}`);
+  return d.content?.map(b => b.text || '').join('') || 'No response.';
 }
 
-// ── Execute command ───────────────────────────────────────────
-async function executeCommand(cmd, convKey) {
-  switch (cmd.action) {
-    case 'draft_email':
-      pendingDrafts.set(convKey, cmd);
-      return `📧 *Email Draft Ready:*\n• *To:* ${cmd.to}\n• *Subject:* ${cmd.subject}\n\n*Body:*\n${cmd.body}\n\n---\n_Reply *yes send* to send, or tell me what to change._`;
-
-    case 'send_email':
-      await sendEmail(cmd.to, cmd.subject, cmd.body);
-      return `✅ *Email sent!*\n• *To:* ${cmd.to}\n• *Subject:* ${cmd.subject}\nDelivered from ${GMAIL_USER} 📧`;
-
-    case 'list_files': {
-      const files = await listDriveFiles(cmd.query);
-      if (!files.length) return `📁 No files found${cmd.query ? ` for "${cmd.query}"` : ''}.`;
-      const list = files.map(f => `• *${f.name}* — ${f.mimeType.includes('spreadsheet') ? '📊' : '📄'} \`${f.id}\``).join('\n');
-      return `📁 *Google Drive Files:*\n${list}\n\n_Use the ID to read a spreadsheet!_`;
-    }
-
-    case 'read_sheet': {
-      const rows = await readSheet(cmd.id, cmd.range);
-      if (!rows.length) return `📊 Sheet is empty or range not found.`;
-      const headers = rows[0];
-      const data = rows.slice(1).slice(0, 10); // show first 10 rows
-      const table = data.map(row => '• ' + headers.map((h, i) => `*${h}:* ${row[i] || '-'}`).join(' | ')).join('\n');
-      return `📊 *Sheet Data* (${rows.length - 1} rows):\n${table}${rows.length > 11 ? `\n_...and ${rows.length - 11} more rows_` : ''}`;
-    }
-
-    case 'append_sheet': {
-      const values = [cmd.row.split(',').map(v => v.trim())];
-      await appendSheet(cmd.id, cmd.range, values);
-      return `✅ *Row added to sheet!*\n• Data: ${cmd.row}`;
-    }
-
-    case 'write_sheet': {
-      const values = [cmd.data.split(',').map(v => v.trim())];
-      await writeSheet(cmd.id, cmd.range, values);
-      return `✅ *Sheet updated!*\n• Range: ${cmd.range}\n• Data: ${cmd.data}`;
-    }
-
-    case 'create_sheet': {
-      const sheet = await createSheet(cmd.title);
-      return `✅ *New spreadsheet created!*\n• *Title:* ${cmd.title}\n• *ID:* \`${sheet.spreadsheetId}\`\n• Open: https://docs.google.com/spreadsheets/d/${sheet.spreadsheetId}`;
-    }
-
-    default:
-      return '⚠️ Unknown command.';
-  }
+async function post(channel, text, thread_ts) {
+  const body = { channel, text };
+  if (thread_ts) body.thread_ts = thread_ts;
+  try {
+    const r = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
+      body: JSON.stringify(body)
+    });
+    return r.json();
+  } catch { return null; }
 }
 
+async function del(channel, ts) {
+  try {
+    await fetch('https://slack.com/api/chat.delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
+      body: JSON.stringify({ channel, ts })
+    });
+  } catch {}
+}
+
+// ── Health ────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok', agent: 'Felix',
-    gmail: GMAIL_PASS ? 'connected' : 'not configured',
-    googleDrive: (process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_PRIVATE_KEY) ? 'connected' : 'not configured',
-    company: 'SBL IT Platforms Co., Ltd.'
+    gmail: GMAIL_PASS ? 'configured' : 'missing',
+    googleDrive: OAUTH_REFRESH_TOKEN ? 'oauth connected' : 'not configured',
+    fileReading: 'pdf, excel, word, images'
   });
 });
 
+// ── Slack Events ──────────────────────────────────────────────
 app.post('/slack/events', async (req, res) => {
   const body = req.body;
-  if (body && body.type === 'url_verification') return res.status(200).json({ challenge: body.challenge });
+  if (body?.type === 'url_verification') return res.status(200).json({ challenge: body.challenge });
   res.status(200).end('OK');
 
-  const event = body && body.event;
+  const event = body?.event;
   if (!event || event.type !== 'message' || event.subtype || event.bot_id) return;
 
   const key = event.client_msg_id || event.ts;
@@ -361,33 +324,33 @@ app.post('/slack/events', async (req, res) => {
   if (!BOT_ID) {
     try {
       const r = await fetch('https://slack.com/api/auth.test', { headers: { Authorization: `Bearer ${SLACK_TOKEN}` } });
-      const d = await r.json();
-      BOT_ID = d.user_id;
-    } catch (e) { return; }
+      BOT_ID = (await r.json()).user_id;
+    } catch { return; }
   }
 
-  const isMentioned = event.text && event.text.includes(`<@${BOT_ID}>`);
+  const isMentioned = (event.text || '').includes(`<@${BOT_ID}>`);
   const isDM = event.channel_type === 'im';
   if (!isMentioned && !isDM) return;
 
   const channel = event.channel;
   const threadTs = event.thread_ts || event.ts;
   const userText = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
+  const hasFiles = event.files?.length > 0;
   const convKey = isDM ? event.user : `${channel}:${threadTs}`;
 
-  if (!userText) {
-    await post(channel, `*สวัสดีครับ!* 👋 I'm *Felix*, Sales Agent for SBL IT Platforms!\n\n✅ *Gmail* — can send from ${GMAIL_USER}\n✅ *Google Drive* — can read/write your files\n✅ *Google Sheets* — can read, write, create sheets\n\n• \`@Felix list my Drive files\`\n• \`@Felix read my leads sheet\`\n• \`@Felix add lead to Google Sheet\`\n• \`@Felix create a new sales tracking sheet\`\n• \`@Felix draft email to client@gym.com\``, threadTs);
+  if (!userText && !hasFiles) {
+    await post(channel, `*สวัสดีครับ!* 👋 I'm *Felix*, Sales Agent for SBL IT Platforms!\n\n✅ Gmail — send from ${GMAIL_USER}\n✅ Google Drive — create/read sheets\n✅ Files — PDF, Excel, Word, Images\n\n• \`@Felix analyze this Excel file\`\n• \`@Felix create a sales tracking sheet\`\n• \`@Felix draft outreach email to gym@example.com\`\n• \`@Felix generate leads for Bangkok gyms\``, threadTs);
     return;
   }
 
-  // Check for email confirmation
+  // Check email confirmation
   const lowerText = userText.toLowerCase();
-  const pendingDraft = pendingDrafts.get(convKey);
-  if (pendingDraft && (lowerText === 'yes send' || lowerText === 'send' || lowerText === 'yes' || lowerText === 'send it')) {
+  const pending = pendingDrafts.get(convKey);
+  if (pending && (lowerText === 'yes send' || lowerText === 'send' || lowerText === 'yes' || lowerText === 'send it')) {
     try {
-      await sendEmail(pendingDraft.to, pendingDraft.subject, pendingDraft.body);
+      await sendEmail(pending.to, pending.subject, pending.body);
       pendingDrafts.delete(convKey);
-      await post(channel, `✅ *Email sent!*\n• *To:* ${pendingDraft.to}\n• *Subject:* ${pendingDraft.subject}\nDelivered from ${GMAIL_USER} 📧`, threadTs);
+      await post(channel, `✅ *Email sent!*\n• *To:* ${pending.to}\n• *Subject:* ${pending.subject}\n\nDelivered from ${GMAIL_USER} 📧`, threadTs);
       return;
     } catch (e) {
       await post(channel, `⚠️ Send failed: ${e.message}`, threadTs);
@@ -397,10 +360,10 @@ app.post('/slack/events', async (req, res) => {
 
   if (!conversations.has(convKey)) conversations.set(convKey, []);
   const hist = conversations.get(convKey);
-  hist.push({ role: 'user', content: userText });
-  if (hist.length > 20) hist.splice(0, hist.length - 20);
+  const prompt = userText || 'Analyze this file and provide sales insights.';
+  hist.push({ role: 'user', content: prompt });
+  if (hist.length > 20) hist.splice(0, 2);
 
-  const hasFiles = event.files && event.files.length > 0;
   const typing = await post(channel, '_Felix is thinking... 🤔_', threadTs);
 
   try {
@@ -409,31 +372,73 @@ app.post('/slack/events', async (req, res) => {
       try {
         fileData = await processFile(event.files[0]);
         if (fileData && fileData.type !== 'image') {
-          await post(channel, `📎 Reading file: *${event.files[0].name}*...`, threadTs);
+          await post(channel, `📎 Reading: *${event.files[0].name}*...`, threadTs);
         }
       } catch (e) {
         await post(channel, `⚠️ Could not read file: ${e.message}`, threadTs);
       }
     }
-    const reply = await claudeWithFile(hist,
-    hist.push({ role: 'assistant', content: reply });
-    if (typing && typing.ts) await del(channel, typing.ts);
 
-    const cmd = parseCommand(reply);
-    if (cmd) {
-      const displayText = reply.replace(cmd.raw, '').trim();
-      if (displayText) await post(channel, displayText, threadTs);
-      try {
-        const result = await executeCommand(cmd, convKey);
-        await post(channel, result, threadTs);
-      } catch (e) {
-        await post(channel, `⚠️ Error: ${e.message}`, threadTs);
+    const reply = await claude(hist, fileData);
+    hist.push({ role: 'assistant', content: reply });
+    if (typing?.ts) await del(channel, typing.ts);
+
+    // Handle email commands
+    const emailCmd = parseEmailCommand(reply);
+    if (emailCmd) {
+      const displayText = reply.replace(emailCmd.raw, '').trim();
+      if (emailCmd.action === 'draft') {
+        pendingDrafts.set(convKey, emailCmd);
+        const msg = `${displayText ? displayText + '\n\n' : ''}📧 *Email Draft:*\n• *To:* ${emailCmd.to}\n• *Subject:* ${emailCmd.subject}\n\n*Body:*\n${emailCmd.body}\n\n---\n_Reply *yes send* to send_`;
+        await post(channel, msg, threadTs);
+      } else if (emailCmd.action === 'send') {
+        if (displayText) await post(channel, displayText, threadTs);
+        try {
+          await sendEmail(emailCmd.to, emailCmd.subject, emailCmd.body);
+          await post(channel, `✅ *Email sent!*\n• *To:* ${emailCmd.to}\n• *Subject:* ${emailCmd.subject}`, threadTs);
+        } catch (e) {
+          await post(channel, `⚠️ Email error: ${e.message}`, threadTs);
+        }
       }
-    } else {
-      await post(channel, reply, threadTs);
+      return;
     }
+
+    // Handle Google commands
+    let text = reply;
+    let gCmd = parseGoogleCommand(text);
+    while (gCmd) {
+      text = text.replace(gCmd.raw, '').trim();
+      try {
+        let result = '';
+        if (gCmd.action === 'CREATE_SHEET') {
+          const id = await createSheet(gCmd.title || 'New Sheet');
+          result = `✅ *Sheet created in your Drive!*\n• *${gCmd.title}*\n• 📊 https://docs.google.com/spreadsheets/d/${id}`;
+        } else if (gCmd.action === 'READ_SHEET') {
+          const rows = await readSheet(gCmd.id, gCmd.range);
+          if (!rows.length) { result = '📊 Sheet is empty.'; }
+          else {
+            const headers = rows[0];
+            const data = rows.slice(1, 11);
+            result = `📊 *Sheet data (${rows.length - 1} rows):*\n` + data.map(row => '• ' + headers.map((h, i) => `*${h}:* ${row[i] || '-'}`).slice(0, 5).join(' | ')).join('\n');
+          }
+        } else if (gCmd.action === 'APPEND_SHEET') {
+          await appendSheet(gCmd.id, gCmd.range || 'Sheet1', [gCmd.row.split(',').map(v => v.trim())]);
+          result = `✅ Row added to sheet!`;
+        } else if (gCmd.action === 'LIST_FILES') {
+          const files = await listDriveFiles(gCmd.query);
+          result = files.length ? `📁 *Drive files:*\n` + files.map(f => `• *${f.name}* ${f.mimeType?.includes('spreadsheet') ? '📊' : '📄'} \`${f.id}\``).join('\n') : '📁 No files found.';
+        }
+        if (result) await post(channel, result, threadTs);
+      } catch (e) {
+        await post(channel, `⚠️ Google error: ${e.message}`, threadTs);
+      }
+      gCmd = parseGoogleCommand(text);
+    }
+    if (text) await post(channel, text, threadTs);
+
   } catch (e) {
-    if (typing && typing.ts) await del(channel, typing.ts);
+    console.error('Error:', e.message);
+    if (typing?.ts) await del(channel, typing.ts);
     await post(channel, `⚠️ Error: ${e.message}`, threadTs);
   }
 });
@@ -449,66 +454,10 @@ app.post('/slack/commands', async (req, res) => {
   const hist = conversations.get(convKey);
   hist.push({ role: 'user', content: text });
   try {
-    const reply = await claude(hist);
+    const reply = await claude(hist, null);
     hist.push({ role: 'assistant', content: reply });
     await post(channel_id, `*Felix:* ${reply}`);
   } catch (e) { await post(channel_id, `⚠️ Error: ${e.message}`); }
 });
 
-async function post(channel, text, thread_ts) {
-  const body = { channel, text };
-  if (thread_ts) body.thread_ts = thread_ts;
-  try {
-    const r = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
-      body: JSON.stringify(body)
-    });
-    return r.json();
-  } catch (e) { return null; }
-}
-
-async function del(channel, ts) {
-  try {
-    await fetch('https://slack.com/api/chat.delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
-      body: JSON.stringify({ channel, ts })
-    });
-  } catch (e) {}
-}
-
-async function claudeWithFile(messages, fileData) {
-  let finalMessages = [...messages];
-  if (fileData) {
-    const lastMsg = finalMessages[finalMessages.length - 1];
-    if (fileData.type === 'image') {
-      finalMessages[finalMessages.length - 1] = {
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: fileData.mimetype, data: fileData.content } },
-          { type: 'text', text: lastMsg.content + `\n\n[Image: ${fileData.name}]` }
-        ]
-      };
-    } else {
-      finalMessages[finalMessages.length - 1] = {
-        role: 'user',
-        content: `${lastMsg.content}\n\n[File: ${fileData.name} (${fileData.type.toUpperCase()}):]\n${fileData.content}`
-      };
-    }
-  }
-  return claude(finalMessages);
-}
-
-async function claude(messages) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 8192, system: FELIX_SYSTEM, messages })
-  });
-  const d = await r.json();
-  if (!r.ok) throw new Error(`Claude API ${r.status}: ${d.error?.message}`);
-  return d.content?.map(b => b.text || '').join('') || 'No response.';
-}
-
-app.listen(PORT, () => console.log(`🤖 Felix + Gmail + Google Drive running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🤖 Felix running on port ${PORT} — Gmail + Drive + Files`));
