@@ -24,15 +24,26 @@ app.use((req, res, next) => {
 
 // ── Gmail ─────────────────────────────────────────────────────
 async function sendEmail(to, subject, body) {
-  const nodemailer = require('nodemailer');
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: GMAIL_USER, pass: GMAIL_PASS }
+  const token = await getOAuthToken();
+  const emailLines = [
+    `From: Felix @ SBL IT Platforms <${GMAIL_USER}>`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    `Content-Type: text/plain; charset=utf-8`,
+    ``,
+    body
+  ];
+  const raw = Buffer.from(emailLines.join('\r\n'))
+    .toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ raw })
   });
-  await transporter.sendMail({
-    from: `Felix @ SBL IT Platforms <${GMAIL_USER}>`,
-    to, subject, text: body
-  });
+  const d = await r.json();
+  if (!r.ok) throw new Error('Gmail API error: ' + JSON.stringify(d));
+  return d;
 }
 
 // ── OAuth Token ───────────────────────────────────────────────
