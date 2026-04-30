@@ -1,4 +1,4 @@
-'use strict';
+use strict';
 const express = require('express');
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -70,7 +70,7 @@ async function getOAuthToken() {
 }
 
 // ── Google Sheets via OAuth ───────────────────────────────────
-async function createSheet(title) {
+async function createSheet(title, headers) {
   const token = await getOAuthToken();
   const metadata = { name: title, mimeType: 'application/vnd.google-apps.spreadsheet' };
   if (DRIVE_FOLDER_ID) metadata.parents = [DRIVE_FOLDER_ID];
@@ -81,6 +81,10 @@ async function createSheet(title) {
   });
   const d = await r.json();
   if (!d.id) throw new Error('Failed to create sheet: ' + JSON.stringify(d));
+  // Add headers if provided
+  if (headers && headers.length > 0) {
+    await appendSheet(d.id, 'Sheet1', [headers]);
+  }
   return d.id;
 }
 
@@ -423,8 +427,23 @@ app.post('/slack/events', async (req, res) => {
       try {
         let result = '';
         if (gCmd.action === 'CREATE_SHEET') {
-          const id = await createSheet(gCmd.title || 'New Sheet');
-          result = `✅ *Sheet created in your Drive!*\n• *${gCmd.title}*\n• 📊 https://docs.google.com/spreadsheets/d/${id}`;
+          const sheetTitle = gCmd.title || 'New Sheet';
+          // Auto-generate headers based on sheet title
+          let headers = [];
+          const t = sheetTitle.toLowerCase();
+          if (t.includes('lead') || t.includes('sales') || t.includes('pipeline')) {
+            headers = ['Company', 'Contact', 'Email', 'Phone', 'Products', 'Status', 'Value (฿)', 'Next Follow-up', 'Notes'];
+          } else if (t.includes('order') || t.includes('invoice')) {
+            headers = ['Order #', 'Date', 'Customer', 'Products', 'Qty', 'Amount (฿)', 'Status', 'Payment', 'Notes'];
+          } else if (t.includes('customer') || t.includes('client')) {
+            headers = ['Company', 'Contact', 'Email', 'Phone', 'Category', 'Monthly Value (฿)', 'Since', 'Status', 'Notes'];
+          } else if (t.includes('inventory') || t.includes('stock')) {
+            headers = ['Product', 'SKU', 'Category', 'Stock', 'Unit Price (฿)', 'Location', 'Reorder Level', 'Notes'];
+          } else if (t.includes('partner')) {
+            headers = ['Company', 'Country', 'Contact', 'Email', 'Products', 'Volume (tons/mo)', 'Status', 'Rating', 'Next Step'];
+          }
+          const id = await createSheet(sheetTitle, headers);
+          result = `✅ *Sheet created in your Drive!*\n• *${sheetTitle}*\n${headers.length ? `• Headers: ${headers.join(', ')}\n` : ''}• 📊 https://docs.google.com/spreadsheets/d/${id}`;
         } else if (gCmd.action === 'READ_SHEET') {
           const rows = await readSheet(gCmd.id, gCmd.range);
           if (!rows.length) { result = '📊 Sheet is empty.'; }
