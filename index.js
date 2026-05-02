@@ -194,6 +194,106 @@ async function clearSheet(id, range) {
   );
 }
 
+// ââ Advanced Sheets ââââââââââââââââââââââââââââââââââââââââââ
+async function addSheetTab(spreadsheetId, sheetName) {
+  const token = await getOAuthToken();
+  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: [{ addSheet: { properties: { title: sheetName } } }] })
+  });
+  const d = await r.json();
+  return d.replies && d.replies[0] && d.replies[0].addSheet && d.replies[0].addSheet.properties && d.replies[0].addSheet.properties.sheetId;
+}
+
+async function getSheetId(spreadsheetId, sheetName) {
+  const token = await getOAuthToken();
+  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + '?fields=sheets.properties', {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  const d = await r.json();
+  const sheet = (d.sheets || []).find(function(s) { return s.properties.title === sheetName; });
+  return sheet && sheet.properties.sheetId || 0;
+}
+
+async function addChart(spreadsheetId, sheetId, chartType, title) {
+  const token = await getOAuthToken();
+  const types = { bar: 'BAR', column: 'COLUMN', line: 'LINE', pie: 'PIE', area: 'AREA' };
+  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests: [{ addChart: { chart: {
+      spec: { title: title || 'Chart', basicChart: {
+        chartType: types[chartType && chartType.toLowerCase()] || 'COLUMN',
+        legendPosition: 'BOTTOM_LEGEND',
+        series: [{ series: { sourceRange: { sources: [{ sheetId: sheetId, startRowIndex: 0, endRowIndex: 100, startColumnIndex: 1, endColumnIndex: 2 }] } } }],
+        domains: [{ domain: { sourceRange: { sources: [{ sheetId: sheetId, startRowIndex: 0, endRowIndex: 100, startColumnIndex: 0, endColumnIndex: 1 }] } } }]
+      }},
+      position: { overlayPosition: { anchorCell: { sheetId: sheetId, rowIndex: 2, columnIndex: 4 } } }
+    }}}]})
+  });
+  return r.json();
+}
+
+async function formatSheet(spreadsheetId, sheetId) {
+  const token = await getOAuthToken();
+  const requests = [
+    { repeatCell: {
+      range: { sheetId: sheetId, startRowIndex: 0, endRowIndex: 1 },
+      cell: { userEnteredFormat: {
+        backgroundColor: { red: 0.27, green: 0.45, blue: 0.77 },
+        textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 }, fontSize: 11 },
+        horizontalAlignment: 'CENTER'
+      }},
+      fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)'
+    }},
+    { autoResizeDimensions: { dimensions: { sheetId: sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 20 } } },
+    { updateSheetProperties: { properties: { sheetId: sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } }
+  ];
+  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets/' + spreadsheetId + ':batchUpdate', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests })
+  });
+  return r.json();
+}
+
+// ââ Upload file to Slack ââââââââââââââââââââââââââââââââââââââ
+async function uploadToSlack(channel, filename, fileBuffer, title) {
+  const urlRes = await fetch('https://slack.com/api/files.getUploadURLExternal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SLACK_TOKEN },
+    body: JSON.stringify({ filename, length: fileBuffer.length })
+  });
+  const urlData = await urlRes.json();
+  if (!urlData.ok) throw new Error('Cannot get upload URL: ' + urlData.error);
+  await fetch(urlData.upload_url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: fileBuffer
+  });
+  const completeRes = await fetch('https://slack.com/api/files.completeUploadExternal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + SLACK_TOKEN },
+    body: JSON.stringify({ files: [{ id: urlData.file_id, title: title || filename }], channel_id: channel })
+  });
+  const completeData = await completeRes.json();
+  if (!completeData.ok) throw new Error('Upload failed: ' + completeData.error);
+  return completeData;
+}
+
+async function createExcelFile(title, headers, rows) {
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(title);
+  ws.addRow(headers);
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+  ws.columns.forEach(function(col) { col.width = 20; });
+  if (rows && rows.length > 0) rows.forEach(function(row) { ws.addRow(row); });
+  return ws.workbook.xlsx.writeBuffer();
+}
+
 async function listDriveFiles(query) {
   const token = await getOAuthToken();
   const q = query ? `name contains '${query}'` : '';
@@ -251,7 +351,7 @@ function parseEmailCommand(text) {
 }
 
 function parseGoogleCommand(text) {
-  const cmds = ['CREATE_SHEET','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL'];
+  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET'];
   for (const cmd of cmds) {
     const m = text.match(new RegExp(`\\[${cmd}\\]([\\s\\S]*?)\\[\\/${cmd}\\]`));
     if (m) {
@@ -341,6 +441,34 @@ ROLE: writer
 QUERY: search term
 [/LIST_FILES]
 
+[ADD_SHEET_TAB]
+ID: sheet_id
+NAME: tab name
+HEADERS: Col1,Col2,Col3
+[/ADD_SHEET_TAB]
+
+[ADD_CHART]
+ID: sheet_id
+SHEET: Sheet1
+TYPE: column/bar/line/pie
+TITLE: Chart Title
+[/ADD_CHART]
+
+[FORMAT_SHEET]
+ID: sheet_id
+SHEET: Sheet1
+[/FORMAT_SHEET]
+
+[UPLOAD_EXCEL]
+TITLE: filename
+HEADERS: Col1,Col2,Col3
+[/UPLOAD_EXCEL]
+
+[EXPORT_SHEET]
+ID: sheet_id
+TITLE: filename
+[/EXPORT_SHEET]
+
 [READ_EMAIL]
 QUERY: from:client@email.com
 [/READ_EMAIL]
@@ -399,16 +527,32 @@ async function claude(messages, fileData, memoryContext) {
 }
 
 async function post(channel, text, thread_ts) {
-  const body = { channel, text };
-  if (thread_ts) body.thread_ts = thread_ts;
-  try {
-    const r = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
-      body: JSON.stringify(body)
-    });
-    return r.json();
-  } catch { return null; }
+  if (!text) return null;
+  const MAX = 3800;
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > MAX) {
+    let splitAt = remaining.lastIndexOf('\n', MAX);
+    if (splitAt < MAX / 2) splitAt = MAX;
+    chunks.push(remaining.substring(0, splitAt));
+    remaining = remaining.substring(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+
+  let lastResult = null;
+  for (const chunk of chunks) {
+    const body = { channel, text: chunk };
+    if (thread_ts) body.thread_ts = thread_ts;
+    try {
+      const r = await fetch('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
+        body: JSON.stringify(body)
+      });
+      lastResult = await r.json();
+    } catch { return null; }
+  }
+  return lastResult;
 }
 
 async function del(channel, ts) {
@@ -608,6 +752,39 @@ app.post('/slack/events', async (req, res) => {
           memory.actions.push({ time: new Date().toISOString(), action: 'sheet_shared', id: gCmd.id, email: gCmd.email });
           saveMemory(memory);
           result = `â Sheet shared with *${gCmd.email}* (${gCmd.role || 'writer'} access)\nâ¢ ð https://docs.google.com/spreadsheets/d/${gCmd.id}`;
+
+        } else if (gCmd.action === 'ADD_SHEET_TAB') {
+          const tabName = gCmd.name || gCmd.title || 'New Sheet';
+          await addSheetTab(gCmd.id, tabName);
+          if (gCmd.headers) await appendSheet(gCmd.id, tabName, [gCmd.headers.split(',').map(function(h) { return h.trim(); })]);
+          result = 'â *Sheet tab added!*\nâ¢ *' + tabName + '*\nâ¢ ð https://docs.google.com/spreadsheets/d/' + gCmd.id;
+
+        } else if (gCmd.action === 'ADD_CHART') {
+          const sheetId = await getSheetId(gCmd.id, gCmd.sheet || 'Sheet1');
+          await addChart(gCmd.id, sheetId, gCmd.type || 'column', gCmd.title || 'Chart');
+          result = 'â *Chart added!*\nâ¢ Type: ' + (gCmd.type || 'column') + '\nâ¢ ð https://docs.google.com/spreadsheets/d/' + gCmd.id;
+
+        } else if (gCmd.action === 'FORMAT_SHEET') {
+          const sheetId = await getSheetId(gCmd.id, gCmd.sheet || 'Sheet1');
+          await formatSheet(gCmd.id, sheetId);
+          result = 'â *Sheet formatted!*\nâ¢ Blue headers, auto-resize, frozen row\nâ¢ ð https://docs.google.com/spreadsheets/d/' + gCmd.id;
+
+        } else if (gCmd.action === 'UPLOAD_EXCEL') {
+          const title = gCmd.title || 'Report';
+          const headers = gCmd.headers ? gCmd.headers.split(',').map(function(h) { return h.trim(); }) : ['Column 1','Column 2','Column 3'];
+          const buffer = await createExcelFile(title, headers, []);
+          await uploadToSlack(channel, title + '.xlsx', Buffer.from(buffer), title);
+          result = 'â *Excel file uploaded to Slack!*\nâ¢ *' + title + '.xlsx*';
+
+        } else if (gCmd.action === 'EXPORT_SHEET') {
+          const token = await getOAuthToken();
+          const exportUrl = 'https://docs.google.com/spreadsheets/d/' + gCmd.id + '/export?format=xlsx';
+          const r = await fetch(exportUrl, { headers: { Authorization: 'Bearer ' + token } });
+          if (!r.ok) throw new Error('Cannot export sheet');
+          const buffer = Buffer.from(await r.arrayBuffer());
+          const title = gCmd.title || 'Sheet';
+          await uploadToSlack(channel, title + '.xlsx', buffer, title);
+          result = 'â *Sheet exported to Slack!*\nâ¢ *' + title + '.xlsx*';
 
         } else if (gCmd.action === 'LIST_FILES') {
           const files = await listDriveFiles(gCmd.query);
