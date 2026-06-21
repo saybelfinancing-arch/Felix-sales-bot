@@ -369,7 +369,7 @@ function parseEmailCommand(text) {
 }
 
 function parseGoogleCommand(text) {
-  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET'];
+  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET','FETCH_URL','SEARCH_COMPANY','SAVE_PROSPECT','LOG_CONTACT'];
   for (const cmd of cmds) {
     const m = text.match(new RegExp(`\\[${cmd}\\]([\\s\\S]*?)\\[\\/${cmd}\\]`));
     if (m) {
@@ -491,16 +491,57 @@ TITLE: filename
 QUERY: from:client@email.com
 [/READ_EMAIL]
 
+WEB SCRAPING — when a website URL is shared:
+[FETCH_URL]
+URL: https://example.com
+[/FETCH_URL]
+IMPORTANT: After getting content from FETCH_URL — IMMEDIATELY analyze it in the same response. NEVER write "loading..." without actual content.
+
+SEARCH FOR COMPANY INFO:
+[SEARCH_COMPANY]
+COMPANY: Company name
+QUERY: optional search query
+[/SEARCH_COMPANY]
+
+SAVE PROSPECT TO PIPELINE:
+[SAVE_PROSPECT]
+COMPANY: Company name
+CATEGORY: hotel/restaurant/shop/distributor/gym
+LOCATION: Bangkok/Phuket/etc
+CONTACT: name and contact info
+STAGE: Prospect/Qualify/Pitch/Negotiate/Closed
+VALUE: estimated monthly THB
+NEXT: next action
+[/SAVE_PROSPECT]
+
+LOG CONTACT ACTION:
+[LOG_CONTACT]
+COMPANY: Company name
+TYPE: call/email/visit/follow-up/sample-drop
+NOTE: what happened, outcome, next step
+[/LOG_CONTACT]
+
 RULES:
 - Always DRAFT emails first, send only after "yes send"
-- When creating sheets, add relevant headers automatically
+- When analyzing a new prospect — IMMEDIATELY use [FETCH_URL] + [SAVE_PROSPECT] in first response
+- NEVER write "I'm analyzing..." without actual analysis — do it immediately
+- If website fails to load — say so honestly, analyze from available info
 - After EVERY significant action — save to memory
 - Always send clickable links to created sheets
 - Sign emails: Felix | Sales Agent | SBL IT Platforms
+- When prospect is mentioned — ALWAYS end with concrete next step + date
 
-TASKS: Lead gen, proposals, outreach (EN+TH), pipeline, file analysis, email campaigns.
-FORMAT: Slack *bold*, bullets, emojis. Always end with next step.
-LANGUAGE: English default, Thai if user writes Thai.`;
+TASKS: B2B lead gen in Thailand, proposals, outreach (EN+TH), pipeline tracking, sample drops, follow-ups, file analysis, email campaigns.
+FORMAT: Slack *bold*, bullets, emojis. Always end with next step + date.
+LANGUAGE: English default, Thai if client writes Thai.
+
+ANALYSIS STRUCTURE for new prospects:
+1. Website/company info (use FETCH_URL)
+2. Product fit (which SBL products match?)
+3. Estimated order value (THB/month)
+4. Contact person name + method
+5. Proposed pitch angle
+6. Draft outreach message`;
 
 // ── State ─────────────────────────────────────────────────────
 const pendingDrafts = new Map();
@@ -812,6 +853,60 @@ app.post('/slack/events', async (req, res) => {
           const emails = await readEmails(gCmd.query || '');
           if (!emails.length) result = `📭 No emails found for: "${gCmd.query}"`;
           else result = `📬 *Emails (${emails.length}):*\n` + emails.map(e => `• *${e.subject}*\n  From: ${e.from}\n  ${e.snippet}`).join('\n\n');
+
+        } else if (gCmd.action === 'FETCH_URL') {
+          const url = gCmd.url || gCmd.сайт || '';
+          if (!url) { result = '⚠️ Please provide a URL.'; }
+          else {
+            await post(channel, `🌐 Fetching: ${url}...`, threadTs);
+            let content = '';
+            const direct = await fetchWebPage(url);
+            if (direct.success && direct.text) content = direct.text;
+            if (!content) result = `⚠️ Could not load: ${url}. Please provide company info manually.`;
+            else result = `✅ *Website loaded:* ${url}\n\n*Content:*\n${content.substring(0, 6000)}`;
+          }
+
+        } else if (gCmd.action === 'SEARCH_COMPANY') {
+          const company = gCmd.company || gCmd.name || '';
+          if (!company) { result = '⚠️ Please provide a company name.'; }
+          else {
+            await post(channel, `🔍 Searching: ${company}...`, threadTs);
+            const info = await searchCompanyInfo(company, gCmd.query);
+            result = `🔎 *Search results for ${company}:*\n${info}`;
+          }
+
+        } else if (gCmd.action === 'SAVE_PROSPECT') {
+          // Save a new prospect to Felix pipeline sheet
+          const company = gCmd.company || gCmd.name || '';
+          const stage = gCmd.stage || 'Prospect';
+          const next = gCmd.next || '';
+          const today = new Date().toISOString().split('T')[0];
+          if (!company) { result = '⚠️ Company name required.'; }
+          else if (FELIX_PIPELINE_SHEET_ID) {
+            await appendSheet(FELIX_PIPELINE_SHEET_ID, 'Sheet1', [[
+              company, gCmd.category || '', gCmd.location || '', gCmd.contact || '',
+              stage, gCmd.value || '', today, next, ''
+            ]]);
+            memory.actions.push({ time: new Date().toISOString(), action: 'prospect_saved', company });
+            saveMemory(memory);
+            result = `✅ *Prospect saved:* ${company}\n• Stage: ${stage}\n• Next: ${next}\n📊 https://docs.google.com/spreadsheets/d/${FELIX_PIPELINE_SHEET_ID}`;
+          } else {
+            result = `⚠️ Pipeline sheet not configured. Set FELIX_PIPELINE_SHEET_ID env var.`;
+          }
+
+        } else if (gCmd.action === 'LOG_CONTACT') {
+          // Log a contact action (call/email/visit/follow-up)
+          const company = gCmd.company || gCmd.name || '';
+          const type = gCmd.type || 'contact';
+          const note = gCmd.note || '';
+          const today = new Date().toISOString().split('T')[0];
+          if (!company) { result = '⚠️ Company name required.'; }
+          else {
+            memory.actions.push({ time: new Date().toISOString(), action: type, company, note });
+            saveMemory(memory);
+            result = `✅ *${type} logged — ${company}*\n_${today}: ${note}_`;
+          }
+
         }
 
         if (result) await post(channel, result, threadTs);
@@ -847,5 +942,182 @@ app.post('/slack/commands', async (req, res) => {
     await post(channel_id, `*Felix:* ${reply}`);
   } catch (e) { await post(channel_id, `⚠️ Error: ${e.message}`); }
 });
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// FELIX — Web scraping, LPR search, Pipeline tracking, Lead-gen
+// ════════════════════════════════════════════════════════════════════════════
+
+// Felix's pipeline sheet
+const FELIX_PIPELINE_SHEET_ID = process.env.FELIX_PIPELINE_SHEET_ID || '';
+const FELIX_CHANNEL = process.env.FELIX_SLACK_CHANNEL || '';
+const SALES_REPORT_CHANNELS_FELIX = [FELIX_CHANNEL, 'C098GG4D802']; // Felix channel + #company-general-reports-results
+
+// ── Web page fetcher (direct) ─────────────────────────────────────────────
+async function fetchWebPage(url) {
+  try {
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(12000)
+    });
+    const html = await r.text();
+    // Strip HTML tags and collapse whitespace
+    const text = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return { success: true, text: text.substring(0, 8000) };
+  } catch(e) {
+    return { success: false, error: e.message };
+  }
+}
+
+// ── Search for company/LPR info ───────────────────────────────────────────
+async function searchCompanyInfo(companyName, query) {
+  const results = [];
+  const searches = [
+    query || `${companyName} Thailand contact email`,
+    `${companyName} ผู้จัดการ ติดต่อ`,
+  ];
+  for (const q of searches.slice(0, 2)) {
+    try {
+      const encoded = encodeURIComponent(q);
+      const r = await fetch(`https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(8000)
+      });
+      const d = await r.json();
+      if (d.AbstractText) results.push(d.AbstractText.substring(0, 500));
+      if (d.AbstractURL) results.push('URL: ' + d.AbstractURL);
+    } catch(e) {}
+  }
+  return results.join('\n') || 'No results found via search.';
+}
+
+// ── Analysis checklist for Thai B2B prospects ─────────────────────────────
+function buildFelixChecklist(company, category) {
+  const cat = (category || '').toLowerCase();
+  let channels = 'Lazada, Shopee, 7-Eleven';
+  if (cat.includes('hotel') || cat.includes('resort')) channels = 'Direct hotel procurement, HoReCa distributors';
+  if (cat.includes('fitness') || cat.includes('gym')) channels = 'Fitness First, Virgin Active, direct B2B';
+  if (cat.includes('restaurant')) channels = 'Direct B2B, food service distributors, HoReCa';
+  if (cat.includes('distributor') || cat.includes('retail')) channels = 'Direct wholesale, Tops Market, Villa Market';
+
+  return `📋 *Checklist — ${company}*
+
+*1. Company Profile*
+☐ Business type (hotel/restaurant/shop/distributor/gym)
+☐ Number of locations / branches
+☐ Current suppliers for similar products
+☐ Monthly volume / purchasing frequency
+☐ Decision maker name + contact
+
+*2. Product Fit Assessment*
+☐ Do they buy mineral water already? (brand, price, volume)
+☐ Do they stock protein bars / healthy snacks?
+☐ Interest in raw chickpeas (wholesale)?
+☐ Price sensitivity vs quality preference
+
+*3. Thai Market Context*
+☐ Location (Bangkok / Phuket / Pattaya / other)
+☐ Customer profile (Thai locals / expats / tourists)
+☐ Relevant channels: ${channels}
+☐ Competitor products currently on shelves
+
+*4. SBL Product Match*
+☐ SBL Water (glass ฿54-65 / PET ฿44-55) — fit?
+☐ FitnesShock Brownies ฿75/pc — fit?
+☐ SHOCKS! Bars ฿65/pc — fit?
+☐ Chickpeas wholesale — volume + price needed?
+
+*5. Contact Strategy*
+☐ Find buyer / purchasing manager name
+☐ Preferred contact: LINE / WhatsApp / email / call
+☐ Best time to call / visit
+☐ Sample drop-off possible?
+
+*6. Action*
+☐ Recommendation: PITCH NOW / QUALIFY MORE / PASS
+☐ Estimated monthly order value (THB)
+☐ Next step with date`;
+}
+
+// ── Weekly sales report for Felix ─────────────────────────────────────────
+async function sendFelixWeeklyReport() {
+  console.log('📊 Generating Felix weekly sales report...');
+  try {
+    if (!FELIX_PIPELINE_SHEET_ID) {
+      console.log('No Felix pipeline sheet configured, skipping report');
+      return;
+    }
+    const rows = await readSheet(FELIX_PIPELINE_SHEET_ID, 'Sheet1');
+    if (!rows?.length) return;
+
+    const data = rows.slice(1).filter(r => r[0]); // skip header
+
+    // Count by stage
+    const stages = {};
+    data.forEach(r => {
+      const stage = r[4] || 'Prospect';
+      stages[stage] = (stages[stage] || 0) + 1;
+    });
+
+    const total = data.length;
+    const stageBlock = Object.entries(stages)
+      .map(([s, n]) => `• *${s}:* ${n}`)
+      .join('\n');
+
+    // Overdue: next step set but no recent update
+    const overdue = data.filter(r => r[7] && !['Closed', 'Pass'].includes(r[4]));
+
+    let report = `📊 *Felix Weekly Sales Report*\n`;
+    report += `_${new Date().toLocaleDateString('en-TH', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}_\n\n`;
+    report += `*Total Active Accounts:* ${total}\n\n`;
+    report += `*Pipeline by Stage:*\n${stageBlock}\n`;
+
+    if (overdue.length > 0) {
+      report += `\n*⏰ Needs Follow-up (${Math.min(overdue.length, 5)}):*\n`;
+      overdue.slice(0, 5).forEach(r => {
+        report += `• *${r[0]}* [${r[4] || 'Prospect'}]${r[7] ? ` — ${r[7]}` : ''}\n`;
+      });
+    }
+
+    if (FELIX_PIPELINE_SHEET_ID) {
+      report += `\n📊 https://docs.google.com/spreadsheets/d/${FELIX_PIPELINE_SHEET_ID}`;
+    }
+
+    for (const chId of SALES_REPORT_CHANNELS_FELIX.filter(Boolean)) {
+      try { 
+        const r = await fetch('https://slack.com/api/chat.postMessage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SLACK_TOKEN}` },
+          body: JSON.stringify({ channel: chId, text: report })
+        });
+      } catch(e) { console.error('Felix report failed for', chId, e.message); }
+    }
+    console.log('✅ Felix weekly report sent.');
+  } catch(e) {
+    console.error('❌ Felix weekly report error:', e.message);
+  }
+}
+
+// ── Friday 19:00 Bangkok scheduler ────────────────────────────────────────
+function startFelixScheduler() {
+  setInterval(() => {
+    const bkk = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    if (bkk.getUTCDay() === 5 && bkk.getUTCHours() === 19 && bkk.getUTCMinutes() === 0) {
+      sendFelixWeeklyReport();
+    }
+  }, 60000);
+  console.log('✅ Felix weekly report scheduler started (Fridays 19:00 Bangkok)');
+}
+
+startFelixScheduler();
 
 app.listen(PORT, () => console.log(`🤖 Felix running on port ${PORT} — Full Gmail + Sheets + Memory`));
