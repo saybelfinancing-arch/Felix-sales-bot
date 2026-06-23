@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 const ANTHROPIC_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const SLACK_TOKEN = (process.env.SLACK_BOT_TOKEN || '').trim();
+const HERMES_USER_ID = 'U0BAF5QQF5Y'; // SBL Personal Assistant — Hermes
 const GMAIL_USER = process.env.GMAIL_USER || 'saybelfinancing@gmail.com';
 const GMAIL_PASS = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s/g, '');
 const OAUTH_REFRESH_TOKEN = (process.env.GOOGLE_OAUTH_REFRESH_TOKEN || '').trim();
@@ -535,6 +536,28 @@ CRITICAL ANALYSIS RULES:
    f) Personalized pitch with specific product names
 6. If website failed to load — say so honestly, do not fake analysis.
 
+CREATING DOCUMENTS — when tabular data or report is needed:
+[EXCEL_TABLE]
+{
+  "title": "Report Title",
+  "subtitle": "SBL IT Platforms | Date",
+  "filename": "report_name.xlsx",
+  "sheetName": "Data",
+  "headers": [
+    {"label": "Column 1", "width": 25},
+    {"label": "Column 2", "width": 15}
+  ],
+  "rows": [
+    ["Value 1", "Value 2"],
+    ["Value 3", "Value 4"]
+  ],
+  "summaryRows": [["TOTAL", "100"]]
+}
+[/EXCEL_TABLE]
+
+Use [EXCEL_TABLE] for: tables, reports, price lists, pipeline data, analytics.
+The file is auto-created and uploaded to Slack as attachment.
+
 RULES:
 - Always DRAFT emails first, send only after "yes send"
 - NEVER write "I'm analyzing..." without actual analysis — do it immediately
@@ -751,6 +774,20 @@ app.post('/slack/events', async (req, res) => {
     hist.push({ role: 'assistant', content: reply });
     memory.conversations[convKey] = hist;
     saveMemory(memory);
+
+    // ── Auto Excel generation from [EXCEL_TABLE] blocks ─────────────────
+    const excelMatch = (reply || '').match(/\[EXCEL_TABLE\]([\s\S]+?)\[\/EXCEL_TABLE\]/i);
+    if (excelMatch) {
+      try {
+        const tableData = JSON.parse(excelMatch[1].trim());
+        const xlsxPath  = await createProfessionalExcel(tableData);
+        const xlsxBuf   = fs_bot.readFileSync(xlsxPath);
+        await uploadToSlack(channel, tableData.filename || 'report.xlsx', xlsxBuf,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          tableData.title || 'Report');
+        fs_bot.unlinkSync(xlsxPath);
+      } catch(e) { console.error('Felix Excel gen error:', e.message); }
+    }
 
     if (typing?.ts) await del(channel, typing.ts);
 
@@ -1171,5 +1208,109 @@ function startFelixScheduler() {
 }
 
 startFelixScheduler();
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// DOCUMENT GENERATION — Professional Excel/PDF/Word
+// ════════════════════════════════════════════════════════════════════════════
+const ExcelJS_bot = require('exceljs');
+const path_bot    = require('path');
+const os_bot      = require('os');
+const fs_bot      = require('fs');
+
+const BRAND_COLORS = {
+  navy:  'FF1A3A6B', gold: 'FFC8960C', teal: 'FF1E6B45',
+  white: 'FFFFFFFF', lgrey: 'FFF4F7FC', mgrey: 'FFDDE3EE',
+};
+
+async function createProfessionalExcel(opts) {
+  const wb = new ExcelJS_bot.Workbook();
+  wb.creator = 'SBL IT Platforms Agent';
+  wb.created = new Date();
+  const ws = wb.addWorksheet(opts.sheetName || 'Report', { views: [{ showGridLines: false }] });
+
+  // Title
+  ws.mergeCells(1, 1, 1, opts.headers.length);
+  const tc = ws.getCell('A1');
+  tc.value = opts.title || 'SBL Report';
+  tc.font  = { bold: true, size: 16, color: { argb: BRAND_COLORS.white }, name: 'Arial' };
+  tc.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND_COLORS.navy } };
+  tc.alignment = { horizontal: 'left', vertical: 'middle' };
+  ws.getRow(1).height = 36;
+
+  let headerRow = 2;
+  if (opts.subtitle) {
+    ws.mergeCells(2, 1, 2, opts.headers.length);
+    const sc = ws.getCell('A2');
+    sc.value = opts.subtitle;
+    sc.font  = { italic: true, size: 10, color: { argb: 'FF666666' }, name: 'Arial' };
+    sc.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND_COLORS.lgrey } };
+    sc.alignment = { horizontal: 'left', vertical: 'middle' };
+    ws.getRow(2).height = 20;
+    headerRow = 3;
+  }
+
+  // Headers
+  opts.headers.forEach((h, i) => {
+    const c = ws.getCell(headerRow, i + 1);
+    c.value = typeof h === 'string' ? h : h.label;
+    c.font  = { bold: true, size: 10, color: { argb: BRAND_COLORS.white }, name: 'Arial' };
+    c.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND_COLORS.teal } };
+    c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    c.border = { bottom: { style: 'medium', color: { argb: BRAND_COLORS.gold } } };
+  });
+  ws.getRow(headerRow).height = 28;
+
+  // Data rows
+  (opts.rows || []).forEach((row, ri) => {
+    const rn = headerRow + 1 + ri;
+    const bg = ri % 2 === 0 ? BRAND_COLORS.white : BRAND_COLORS.lgrey;
+    row.forEach((val, ci) => {
+      const c = ws.getCell(rn, ci + 1);
+      c.value = val;
+      c.font  = { size: 9, name: 'Arial' };
+      c.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      c.alignment = { vertical: 'top', wrapText: true };
+      c.border = {
+        bottom: { style: 'thin', color: { argb: BRAND_COLORS.mgrey } },
+        right:  { style: 'thin', color: { argb: BRAND_COLORS.mgrey } }
+      };
+    });
+    ws.getRow(rn).height = 36;
+  });
+
+  // Summary rows
+  if (opts.summaryRows?.length) {
+    const ss = headerRow + 1 + (opts.rows?.length || 0) + 1;
+    opts.summaryRows.forEach((srow, sri) => {
+      const rn = ss + sri;
+      srow.forEach((val, ci) => {
+        const c = ws.getCell(rn, ci + 1);
+        c.value = val;
+        c.font  = { bold: true, size: 9, name: 'Arial', color: { argb: BRAND_COLORS.navy } };
+        c.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND_COLORS.mgrey } };
+        c.alignment = { vertical: 'middle' };
+      });
+      ws.getRow(rn).height = 24;
+    });
+  }
+
+  // Column widths
+  opts.headers.forEach((h, i) => {
+    ws.getColumn(i + 1).width = (typeof h === 'object' && h.width) ? h.width : 20;
+  });
+
+  // Footer
+  const lr = ws.lastRow.number + 2;
+  ws.mergeCells(lr, 1, lr, opts.headers.length);
+  const fc = ws.getCell(lr, 1);
+  fc.value = `SBL IT Platforms Co., Ltd. | Generated: ${new Date().toLocaleString('en-TH', { timeZone: 'Asia/Bangkok' })} (Bangkok)`;
+  fc.font  = { italic: true, size: 8, color: { argb: 'FF999999' }, name: 'Arial' };
+  fc.alignment = { horizontal: 'right' };
+
+  const tmpPath = path_bot.join(os_bot.tmpdir(), opts.filename || 'report.xlsx');
+  await wb.xlsx.writeFile(tmpPath);
+  return tmpPath;
+}
 
 app.listen(PORT, () => console.log(`🤖 Felix running on port ${PORT} — Full Gmail + Sheets + Memory`));
