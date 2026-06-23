@@ -966,6 +966,38 @@ app.post('/slack/commands', async (req, res) => {
 });
 
 
+
+// ── Tavily API (professional web search) ─────────────────────────────────
+const TAVILY_KEY = process.env.TAVILY_API_KEY || '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';
+
+async function tavilySearch(query, maxResults = 5) {
+  try {
+    const r = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_KEY,
+        query,
+        search_depth: 'advanced',
+        max_results: maxResults,
+        include_answer: true,
+        include_raw_content: false,
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Tavily error');
+    const answer  = d.answer || '';
+    const sources = (d.results || []).map(s =>
+      `• ${s.title} (${s.url})\n  ${(s.content || '').substring(0, 250)}`
+    ).join('\n\n');
+    return { answer, sources, results: d.results || [] };
+  } catch(e) {
+    console.error('Tavily error:', e.message);
+    return { answer: '', sources: '', results: [] };
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // FELIX — Web scraping, LPR search, Pipeline tracking, Lead-gen
 // ════════════════════════════════════════════════════════════════════════════
@@ -1009,14 +1041,12 @@ async function searchCompanyInfo(companyName, query) {
   ];
   for (const q of searches.slice(0, 2)) {
     try {
-      const encoded = encodeURIComponent(q);
-      const r = await fetch(`https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        signal: AbortSignal.timeout(8000)
+      const tav = await tavilySearch(q, 3);
+      if (tav.answer) results.push(tav.answer.substring(0, 500));
+      tav.results.slice(0, 2).forEach(r => {
+        if (r.url) results.push('URL: ' + r.url);
+        if (r.content) results.push(r.content.substring(0, 300));
       });
-      const d = await r.json();
-      if (d.AbstractText) results.push(d.AbstractText.substring(0, 500));
-      if (d.AbstractURL) results.push('URL: ' + d.AbstractURL);
     } catch(e) {}
   }
   return results.join('\n') || 'No results found via search.';
