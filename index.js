@@ -521,11 +521,23 @@ TYPE: call/email/visit/follow-up/sample-drop
 NOTE: what happened, outcome, next step
 [/LOG_CONTACT]
 
+CRITICAL ANALYSIS RULES:
+1. When [Website content for analysis] is in the message — THIS IS THE PRIMARY SOURCE. Use ONLY real data from it.
+2. FORBIDDEN to write about a company what is not in the website content received.
+3. ALWAYS list specific real products from the content (names, formats, prices if available).
+4. NEVER write "waiting for data" if website content is already in the message — that is an error.
+5. STRICT analysis structure:
+   a) Real products from website (names, SKUs, prices in THB estimation)
+   b) Which specific products fit Thailand market and WHY
+   c) Real barriers found (shelf life? certifications mentioned?)
+   d) Specific Thai sales channels for THIS category
+   e) Financial model based on REAL product prices
+   f) Personalized pitch with specific product names
+6. If website failed to load — say so honestly, do not fake analysis.
+
 RULES:
 - Always DRAFT emails first, send only after "yes send"
-- When analyzing a new prospect — IMMEDIATELY use [FETCH_URL] + [SAVE_PROSPECT] in first response
 - NEVER write "I'm analyzing..." without actual analysis — do it immediately
-- If website fails to load — say so honestly, analyze from available info
 - After EVERY significant action — save to memory
 - Always send clickable links to created sheets
 - Sign emails: Felix | Sales Agent | SBL IT Platforms
@@ -533,15 +545,7 @@ RULES:
 
 TASKS: B2B lead gen in Thailand, proposals, outreach (EN+TH), pipeline tracking, sample drops, follow-ups, file analysis, email campaigns.
 FORMAT: Slack *bold*, bullets, emojis. Always end with next step + date.
-LANGUAGE: English default, Thai if client writes Thai.
-
-ANALYSIS STRUCTURE for new prospects:
-1. Website/company info (use FETCH_URL)
-2. Product fit (which SBL products match?)
-3. Estimated order value (THB/month)
-4. Contact person name + method
-5. Proposed pitch angle
-6. Draft outreach message`;
+LANGUAGE: English default, Thai if client writes Thai.`;
 
 // ── State ─────────────────────────────────────────────────────
 const pendingDrafts = new Map();
@@ -704,7 +708,25 @@ app.post('/slack/events', async (req, res) => {
     knownSheets ? `Known sheets:\n${knownSheets}` : ''
   ].filter(Boolean).join('\n\n');
 
-  const prompt = userText || 'Analyze this file and provide sales insights.';
+  let prompt = userText || 'Analyze this file and provide sales insights.';
+
+  // ── Auto-detect URLs and fetch content before Claude call ──────────────
+  const urlRegex = /https?:\/\/[^\s<>"]+/gi;
+  const detectedUrls = [...new Set((userText || '').match(urlRegex) || [])];
+
+  if (detectedUrls.length > 0) {
+    let webContent = '';
+    for (const wu of detectedUrls) {
+      const direct = await fetchWebPage(wu);
+      if (direct.success && direct.text) webContent += '[' + wu + ']:\n' + direct.text + '\n\n';
+    }
+    if (webContent) {
+      prompt += '\n\n[Website content for analysis — use THIS DATA, do not make up info:]:\n' + webContent.substring(0, 8000);
+    } else {
+      prompt += '\n\n[IMPORTANT: Website ' + detectedUrls[0] + ' could not be loaded. Analyze based on available info only.]';
+    }
+  }
+
   hist.push({ role: 'user', content: prompt });
   if (hist.length > 40) hist.splice(0, hist.length - 40);
 
