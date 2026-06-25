@@ -7,7 +7,8 @@ const PORT = Number(process.env.PORT) || 3000;
 
 const ANTHROPIC_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const SLACK_TOKEN = (process.env.SLACK_BOT_TOKEN || '').trim();
-const HERMES_USER_ID = 'U0BAF5QQF5Y'; // SBL Personal Assistant — Hermes
+const HERMES_USER_ID  = 'U0BAF5QQF5Y'; // SBL Personal Assistant — Hermes
+const FELIX_CHANNEL   = 'C0B53EXNKL1'; // #sales-russian-products-in-thailand
 const GMAIL_USER = process.env.GMAIL_USER || 'saybelfinancing@gmail.com';
 const GMAIL_PASS = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s/g, '');
 const OAUTH_REFRESH_TOKEN = (process.env.GOOGLE_OAUTH_REFRESH_TOKEN || '').trim();
@@ -691,7 +692,9 @@ app.post('/slack/events', async (req, res) => {
   const isMentioned = (event.text || '').includes(`<@${BOT_ID}>`);
   const isDM = event.channel_type === 'im';
   const hasFiles = event.files?.length > 0;
-  if (!isMentioned && !isDM) return;
+  const isFromHermes = event.user === HERMES_USER_ID;
+  // Allow: DM, @mention, or Hermes commander
+  if (!isMentioned && !isDM && !isFromHermes) return;
 
   const channel = event.channel;
   const threadTs = event.thread_ts || event.ts;
@@ -1044,7 +1047,7 @@ async function tavilySearch(query, maxResults = 5) {
 
 // Felix's pipeline sheet
 const FELIX_PIPELINE_SHEET_ID = process.env.FELIX_PIPELINE_SHEET_ID || '';
-const FELIX_CHANNEL = process.env.FELIX_SLACK_CHANNEL || '';
+// FELIX_CHANNEL defined above
 const SALES_REPORT_CHANNELS_FELIX = [FELIX_CHANNEL, 'C098GG4D802']; // Felix channel + #company-general-reports-results
 
 // ── Web page fetcher (direct) ─────────────────────────────────────────────
