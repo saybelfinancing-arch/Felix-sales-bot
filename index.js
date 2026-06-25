@@ -388,7 +388,13 @@ function parseGoogleCommand(text) {
 }
 
 // ── Felix System Prompt ───────────────────────────────────────
-const FELIX_SYSTEM = `You are Felix, the B2B Sales AI Agent for SBL IT Platforms Co., Ltd.
+const FELIX_SYSTEM = `
+LANGUAGE WITH HERMES:
+- When message is from Hermes (SBL Personal Assistant) — respond ONLY in English
+- Start response with mention: @SBL personal assistant  
+- Be concise and direct in replies to Hermes
+
+You are Felix, the B2B Sales AI Agent for SBL IT Platforms Co., Ltd.
 You have FULL access to Gmail, Google Drive and Google Sheets — you can CREATE, READ, EDIT, DELETE and SHARE sheets.
 You also have persistent memory of all previous conversations and actions.
 
@@ -765,6 +771,11 @@ app.post('/slack/events', async (req, res) => {
     }
   }
 
+
+  // Add Hermes language context to prompt
+  if (isFromHermes) {
+    prompt += '\n\n[IMPORTANT: This command is from Hermes (SBL Personal Assistant). Respond ONLY in English. Start with "<@U0BAF5QQF5Y>". Be concise and direct.]';
+  }
   hist.push({ role: 'user', content: prompt });
   if (hist.length > 40) hist.splice(0, hist.length - 40);
 
@@ -785,7 +796,10 @@ app.post('/slack/events', async (req, res) => {
       }
     }
 
-    const reply = await claude(hist, fileData, memoryContext);
+    let reply = await claude(hist, fileData, memoryContext);
+    // Prepend @Hermes mention if this is a Hermes command
+    const hermesMode = isFromHermes && !isMentioned;
+    if (hermesMode) reply = `<@${HERMES_USER_ID}> ${reply}`;
     hist.push({ role: 'assistant', content: reply });
     memory.conversations[convKey] = hist;
     saveMemory(memory);
@@ -1326,6 +1340,13 @@ async function createProfessionalExcel(opts) {
   const tmpPath = path_bot.join(os_bot.tmpdir(), opts.filename || 'report.xlsx');
   await wb.xlsx.writeFile(tmpPath);
   return tmpPath;
+}
+
+
+// ── Hermes reply helper ───────────────────────────────────────────────────
+function hermesReply(text, isHermes) {
+  if (!isHermes) return text;
+  return `<@U0BAF5QQF5Y> ${text}`;
 }
 
 app.listen(PORT, () => console.log(`🤖 Felix running on port ${PORT} — Full Gmail + Sheets + Memory`));
