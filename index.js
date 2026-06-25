@@ -669,7 +669,10 @@ app.post('/slack/events', async (req, res) => {
   res.status(200).end('OK');
 
   const event = body?.event;
-  if (!event || event.type !== 'message' || event.bot_id) return;
+  // Allow Hermes personal assistant bot through even though it has bot_id
+  const isHermesEvent = event.user === 'U0BAF5QQF5Y';
+  if (!event || event.type !== 'message') return;
+  if (event.bot_id && !isHermesEvent) return;
   if (event.subtype && event.subtype !== 'file_share') return;
 
   const key = event.client_msg_id || event.ts;
