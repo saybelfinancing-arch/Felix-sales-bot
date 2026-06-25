@@ -695,6 +695,15 @@ app.post('/slack/events', async (req, res) => {
   const isFromHermes = event.user === HERMES_USER_ID;
   // Allow: DM, @mention, or Hermes commander
   if (!isMentioned && !isDM && !isFromHermes) return;
+  // If Hermes explicitly mentions another agent — skip
+  const JANE_BOT_ID  = 'U0BAZRWADBN';
+  const ALEXEY_BOT_ID = process.env.ALEXEY_BOT_ID || '';
+  const rawText = event.text || '';
+  if (isFromHermes && !isMentioned) {
+    const targetsJane   = rawText.includes(`<@${JANE_BOT_ID}>`);
+    const targetsAlexey = /alexey|алексей/i.test(rawText) && !rawText.includes(`<@${BOT_ID}>`);
+    if (targetsJane || targetsAlexey) return; // Not for Felix
+  }
 
   const channel = event.channel;
   const threadTs = event.thread_ts || event.ts;
