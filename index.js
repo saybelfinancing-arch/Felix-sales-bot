@@ -695,10 +695,11 @@ app.post('/slack/events', async (req, res) => {
     } catch { return; }
   }
 
-  const isMentioned = (event.text || '').includes(`<@${BOT_ID}>`);
+  const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
   const isDM = event.channel_type === 'im';
   const hasFiles = event.files?.length > 0;
   const isFromHermes = event.user === HERMES_USER_ID;
+  const felixHermesMode = isFromHermes;
   // Allow: DM, @mention, or Hermes commander
   if (!isMentioned && !isDM && !isFromHermes) return;
   // If Hermes explicitly mentions another agent — skip
@@ -796,10 +797,7 @@ app.post('/slack/events', async (req, res) => {
       }
     }
 
-    let reply = await claude(hist, fileData, memoryContext);
-    // Prepend @Hermes mention if this is a Hermes command
-    const hermesMode = isFromHermes && !isMentioned;
-    if (hermesMode) reply = `<@${HERMES_USER_ID}> ${reply}`;
+    const reply = await claude(hist, fileData, memoryContext);
     hist.push({ role: 'assistant', content: reply });
     memory.conversations[convKey] = hist;
     saveMemory(memory);
@@ -1003,7 +1001,10 @@ app.post('/slack/events', async (req, res) => {
       }
       gCmd = parseGoogleCommand(text);
     }
-    if (text) await post(channel, text, threadTs);
+    if (text) {
+      const finalText_fel = felixHermesMode ? `<@${HERMES_USER_ID}> ${text}` : text;
+      await post(channel, finalText_fel, threadTs);
+    }
 
   } catch (e) {
     console.error('Error:', e.message);
