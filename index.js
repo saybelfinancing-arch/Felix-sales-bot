@@ -676,11 +676,19 @@ app.post('/slack/events', async (req, res) => {
   res.status(200).end('OK');
 
   const event = body?.event;
-  // Allow Hermes personal assistant bot through even though it has bot_id
-  const isHermesEvent = event.user === 'U0BAF5QQF5Y';
   if (!event || event.type !== 'message') return;
-  if (event.bot_id && !isHermesEvent) return;
   if (event.subtype && event.subtype !== 'file_share') return;
+
+  // Robust Hermes detection: check user ID, username, and bot name
+  const isHermesEvent = (
+    event.user === 'U0BAF5QQF5Y' ||
+    (event.bot_profile?.app_id && event.username === 'sbl_personal_assistant') ||
+    (event.bot_profile?.name || '').toLowerCase().includes('hermes') ||
+    (event.username || '').toLowerCase().includes('sbl_personal') ||
+    (event.username || '').toLowerCase().includes('hermes')
+  );
+  console.log('Felix event from:', event.user, '| bot_id:', event.bot_id, '| username:', event.username, '| isHermes:', isHermesEvent);
+  if (event.bot_id && !isHermesEvent) return;
 
   const key = event.client_msg_id || event.ts;
   if (processed.has(key)) return;
@@ -698,7 +706,7 @@ app.post('/slack/events', async (req, res) => {
   const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
   const isDM = event.channel_type === 'im';
   const hasFiles = event.files?.length > 0;
-  const isFromHermes = event.user === HERMES_USER_ID;
+  const isFromHermes = isHermesEvent; // Use robust detection
   const felixHermesMode = isFromHermes;
   // Allow: DM, @mention, or Hermes commander
   if (!isMentioned && !isDM && !isFromHermes) return;
