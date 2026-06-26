@@ -703,33 +703,15 @@ app.post('/slack/events', async (req, res) => {
     } catch { return; }
   }
 
-  const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
+    const rawMsg = (event.text || '').toLowerCase();
   const isDM = event.channel_type === 'im';
-  const hasFiles = event.files?.length > 0;
-  const isFromHermes = isHermesEvent; // Use robust detection
-  const felixHermesMode = isFromHermes;
-  // Allow: DM, @mention, or Hermes commander
-  if (!isMentioned && !isDM && !isFromHermes) return;
-  // If Hermes explicitly mentions another agent — skip
-  const JANE_BOT_ID  = 'U0BAZRWADBN';
-  const ALEXEY_BOT_ID = process.env.ALEXEY_BOT_ID || '';
-  const rawText = event.text || '';
-    // Route: skip if Hermes is addressing Jane or Alexey (by name, username, or User ID tag)
-  if (isFromHermes && !isMentioned) {
-    const rawForRoute = event.text || '';
-    const rtLower = rawForRoute.toLowerCase();
-    // Jane: check by name, or direct user ID tag @U0BAZRWADBN
-    const targetsJane   = rtLower.includes('@jane') ||
-                          rawForRoute.includes('<@U0BAZRWADBN>') ||
-                          rawForRoute.includes('@U0BAZRWADBN');
-    // Alexey: check by name
-    const targetsAlexey = rtLower.includes('@alexey') || rtLower.includes('@алексей');
-    if (targetsJane || targetsAlexey) {
-      console.log('Felix: skipping — Hermes targeting Jane or Alexey');
-      return;
-    }
-  }
-
+  const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
+  const isNameMentioned = rawMsg.includes('@felix');
+  const isFromHermes = isHermesEvent;
+  // Respond only if: DM, bot tag @mention, or name written explicitly
+  if (!isDM && !isMentioned && !isNameMentioned) return;
+  const hermesMode = isFromHermes;
+  const felixHermesMode = hermesMode;
   const channel = event.channel;
   const threadTs = event.thread_ts || event.ts;
   const userText = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
