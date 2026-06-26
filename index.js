@@ -714,10 +714,16 @@ app.post('/slack/events', async (req, res) => {
   const JANE_BOT_ID  = 'U0BAZRWADBN';
   const ALEXEY_BOT_ID = process.env.ALEXEY_BOT_ID || '';
   const rawText = event.text || '';
+    // Route: skip if Hermes is addressing Jane or Alexey by name/mention
   if (isFromHermes && !isMentioned) {
-    const targetsJane   = rawText.includes(`<@${JANE_BOT_ID}>`);
-    const targetsAlexey = /alexey|алексей/i.test(rawText) && !rawText.includes(`<@${BOT_ID}>`);
-    if (targetsJane || targetsAlexey) return; // Not for Felix
+    const rt = (event.text || '').toLowerCase();
+    const JANE_BOT_ID_R = 'U0BAZRWADBN';
+    const targetsJane   = rt.includes('@jane') || (event.text||'').includes(`<@${JANE_BOT_ID_R}>`);
+    const targetsAlexey = rt.includes('@alexey') || rt.includes('@алексей');
+    if (targetsJane || targetsAlexey) {
+      console.log('Felix: skipping — Hermes targeting Jane or Alexey');
+      return;
+    }
   }
 
   const channel = event.channel;
