@@ -688,7 +688,16 @@ app.post('/slack/events', async (req, res) => {
     (event.username || '').toLowerCase().includes('hermes')
   );
   console.log('Felix event from:', event.user, '| bot_id:', event.bot_id, '| username:', event.username, '| isHermes:', isHermesEvent);
-  if (event.bot_id && !isHermesEvent) return;
+  // If bot message targets Felix explicitly — allow it through even if not Hermes
+  const textForCheck = (event.text || '').toLowerCase();
+  const isTargetingFelix = textForCheck.includes('@felix') || 
+                           (event.text || '').includes('<@U0AM5RPU9S9>') ||
+                           (event.text || '').includes(`<@${BOT_ID}>`);
+  
+  if (event.bot_id && !isHermesEvent && !isTargetingFelix) return;
+  
+  // Re-check isHermesEvent including if it targets Felix
+  const isEffectivelyHermes = isHermesEvent || (event.bot_id && isTargetingFelix);
 
   const key = event.client_msg_id || event.ts;
   if (processed.has(key)) return;
@@ -707,7 +716,7 @@ app.post('/slack/events', async (req, res) => {
   const isDM = event.channel_type === 'im';
   const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
   const isNameMentioned = rawMsg.includes('@felix') || (event.text||'').includes('<@U0AM5RPU9S9>');
-  const isFromHermes = isHermesEvent;
+  const isFromHermes = isEffectivelyHermes || isHermesEvent;
   console.log('Felix trigger: isDM='+isDM+' isMentioned='+isMentioned+' isName='+isNameMentioned+' isHermes='+isFromHermes+' text='+(event.text||'').substring(0,80));
   // Respond only if: DM, bot tag @mention, name/ID explicitly mentioned, OR Hermes command
   if (!isDM && !isMentioned && !isNameMentioned && !isFromHermes) return;
