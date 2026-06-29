@@ -706,9 +706,10 @@ app.post('/slack/events', async (req, res) => {
     const rawMsg = (event.text || '').toLowerCase();
   const isDM = event.channel_type === 'im';
   const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
-  const isNameMentioned = rawMsg.includes('@felix');
+  const isNameMentioned = rawMsg.includes('@felix') || (event.text||'').includes('<@U0AM5RPU9S9>');
   const isFromHermes = isHermesEvent;
-  // Respond only if: DM, bot tag @mention, or name written explicitly
+  console.log('Felix trigger: isDM='+isDM+' isMentioned='+isMentioned+' isName='+isNameMentioned+' isHermes='+isFromHermes+' text='+(event.text||'').substring(0,80));
+  // Respond only if: DM, bot tag @mention, or name/ID explicitly mentioned
   if (!isDM && !isMentioned && !isNameMentioned) return;
   const hermesMode = isFromHermes;
   const felixHermesMode = hermesMode;
