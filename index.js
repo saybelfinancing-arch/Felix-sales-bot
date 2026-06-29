@@ -724,6 +724,7 @@ app.post('/slack/events', async (req, res) => {
   const felixHermesMode = hermesMode;
   const channel = event.channel;
   const threadTs = event.thread_ts || event.ts;
+  const hasFiles = event.files?.length > 0;
   const userText = (event.text || '').replace(/<@[A-Z0-9]+>/g, '').trim();
   const convKey = isDM ? event.user : `${channel}:${threadTs}`;
 
