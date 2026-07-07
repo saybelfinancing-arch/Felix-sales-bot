@@ -2,6 +2,27 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+
+// ── Obsidian Memory ───────────────────────────────────────────────────────────
+async function saveToObsidian(agentName, fileName, entry) {
+  const token = process.env.GITHUB_TOKEN || '';
+  const repo  = process.env.MEMORY_REPO  || 'saybelfinancing-arch/sbl-agent-memory';
+  if (!token) return;
+  try {
+    const path = `${agentName}/${fileName}.md`;
+    const apiUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
+    const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' };
+    let sha = null, existing = '';
+    try { const r = await fetch(apiUrl,{headers}); const d = await r.json(); if(d.sha){sha=d.sha;existing=Buffer.from(d.content,'base64').toString('utf-8');} } catch(e){}
+    const ts = new Date().toISOString().replace('T',' ').substring(0,16);
+    const updated = existing + `\n---\n**${ts}**\n${entry}\n`;
+    const body = { message: `${agentName}: memory`, content: Buffer.from(updated).toString('base64') };
+    if (sha) body.sha = sha;
+    await fetch(apiUrl, { method: 'PUT', headers, body: JSON.stringify(body) });
+    console.log(`Memory saved: ${path}`);
+  } catch(e) { console.error('Memory error:', e.message); }
+}
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -859,6 +880,11 @@ app.post('/slack/events', async (req, res) => {
 
     // Handle Google commands
     let text = reply;
+    // Save significant interactions to Obsidian
+    if (userText && userText.length > 20 && text && text.length > 20) {
+      const topic = userText.substring(0, 60).replace(/\n/g, ' ');
+      saveToObsidian('Felix', 'conversations', `**Topic:** ${topic}\n**Response summary:** ${text.substring(0,200)}`).catch(()=>{});
+    }
     let gCmd = parseGoogleCommand(text);
     while (gCmd) {
       text = text.replace(gCmd.raw, '').trim();
