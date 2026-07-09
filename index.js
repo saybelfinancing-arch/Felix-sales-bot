@@ -1132,7 +1132,7 @@ app.post('/slack/commands', async (req, res) => {
 const TAVILY_KEY    = process.env.TAVILY_API_KEY || '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';
 const TWILIO_SID    = (process.env.TWILIO_ACCOUNT_SID || '').trim();
 const TWILIO_TOKEN  = (process.env.TWILIO_AUTH_TOKEN  || '').trim();
-const TWILIO_FROM   = (process.env.TWILIO_FROM_NUMBER || '').trim();
+const TWILIO_FROM   = (process.env.TWILIO_FROM_NUMBER || '+13365158698').trim();
 
 async function tavilySearch(query, maxResults = 5) {
   try {
