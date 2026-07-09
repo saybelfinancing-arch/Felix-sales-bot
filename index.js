@@ -392,7 +392,7 @@ function parseEmailCommand(text) {
 }
 
 function parseGoogleCommand(text) {
-  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET','FETCH_URL','SEARCH_COMPANY','SAVE_PROSPECT','LOG_CONTACT'];
+  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET','FETCH_URL','SEARCH_COMPANY','SAVE_PROSPECT','LOG_CONTACT','CALL_PHONE','GET_CALL_STATS','SAVE_PARTNER'];
   for (const cmd of cmds) {
     const m = text.match(new RegExp(`\\[${cmd}\\]([\\s\\S]*?)\\[\\/${cmd}\\]`));
     if (m) {
@@ -416,6 +416,17 @@ LANGUAGE WITH HERMES:
 - Be concise and direct in replies to Hermes
 
 You are Felix, the B2B Sales AI Agent for SBL IT Platforms Co., Ltd.
+You specialize in the THAI MARKET — working with Thai companies, distributors, gyms, pharmacies, supermarkets.
+You communicate in THAI with Thai partners and in ENGLISH with international contacts.
+When making calls via Twilio, use Thai language for Thai companies.
+
+KEY THAI PHRASES FOR CALLS:
+- สวัสดีครับ/ค่ะ ผม/ดิฉัน ชื่อ เฟลิกซ์ จาก SBL IT Platforms (Hello, my name is Felix from SBL)
+- เราจำหน่ายสินค้าพรีเมียมจากรัสเซีย (We distribute premium products from Russia)
+- น้ำแร่ SBL และ FitnesShock โปรตีนบาร์ (SBL Mineral Water and FitnesShock Protein Bars)
+- ขอนัดประชุมได้ไหมครับ/ค่ะ? (Can we schedule a meeting?)
+
+PRODUCTS: SBL Mineral Water 🇷🇺 (from Russia), FitnesShock Protein Bars 💪
 You have FULL access to Gmail, Google Drive and Google Sheets — you can CREATE, READ, EDIT, DELETE and SHARE sheets.
 You also have persistent memory of all previous conversations and actions.
 
@@ -1037,6 +1048,45 @@ app.post('/slack/events', async (req, res) => {
             result = `✅ *${type} logged — ${company}*\n_${today}: ${note}_`;
           }
 
+
+        } else if (gCmd.action === 'CALL_PHONE') {
+          const phone = gCmd.phone || gCmd.number || '';
+          if (!phone) { result = '⚠️ Please provide a phone number.'; }
+          else {
+            const callResult = await twilioCall(phone);
+            if (callResult.sid) {
+              memory.actions.push({ time: new Date().toISOString(), action: 'call', phone, sid: callResult.sid });
+              saveMemory(memory);
+              result = `✅ *Call initiated!*\n• Phone: ${phone}\n• SID: ${callResult.sid}\n• Status: ${callResult.status}`;
+            } else {
+              result = `⚠️ Call failed: ${callResult.message || JSON.stringify(callResult)}`;
+            }
+          }
+
+        } else if (gCmd.action === 'GET_CALL_STATS') {
+          if (!TWILIO_SID) { result = '⚠️ Twilio not configured. Add TWILIO_ACCOUNT_SID to Railway.'; }
+          else {
+            const auth = Buffer.from(TWILIO_SID + ':' + TWILIO_TOKEN).toString('base64');
+            const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json?PageSize=20`, { headers: { Authorization: 'Basic ' + auth } });
+            const d = await r.json();
+            const calls = (d.calls || []).slice(0, 10);
+            result = `📊 *Recent Calls (${calls.length}):*\n${calls.map(c => `• ${c.to} | ${c.status} | ${(c.start_time||'').substring(0,10)}`).join('\n') || 'No calls found'}`;
+          }
+
+        } else if (gCmd.action === 'SAVE_PARTNER') {
+          const name    = gCmd.name || gCmd.company || '';
+          const contact = gCmd.contact || gCmd.lpr || '';
+          const phone   = gCmd.phone || '';
+          const email   = gCmd.email || '';
+          const notes   = gCmd.note || gCmd.notes || '';
+          if (!name) { result = '⚠️ Please provide company name.'; }
+          else {
+            memory.actions.push({ time: new Date().toISOString(), action: 'partner_saved', name, contact, phone });
+            saveMemory(memory);
+            saveToObsidian('Felix', 'partners', `**${name}** | ${contact} | ${phone} | ${email} | ${notes} | ${new Date().toISOString().split('T')[0]}`).catch(()=>{});
+            result = `✅ *Partner saved:* ${name}\n• Contact: ${contact}\n• Phone: ${phone}\n• Email: ${email}`;
+          }
+
         }
 
         if (result) await post(channel, result, threadTs);
@@ -1079,7 +1129,10 @@ app.post('/slack/commands', async (req, res) => {
 
 
 // ── Tavily API (professional web search) ─────────────────────────────────
-const TAVILY_KEY = process.env.TAVILY_API_KEY || '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';
+const TAVILY_KEY    = process.env.TAVILY_API_KEY || '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';
+const TWILIO_SID    = (process.env.TWILIO_ACCOUNT_SID || '').trim();
+const TWILIO_TOKEN  = (process.env.TWILIO_AUTH_TOKEN  || '').trim();
+const TWILIO_FROM   = (process.env.TWILIO_FROM_NUMBER || '').trim();
 
 async function tavilySearch(query, maxResults = 5) {
   try {
