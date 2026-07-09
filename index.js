@@ -392,13 +392,13 @@ function parseEmailCommand(text) {
 }
 
 function parseGoogleCommand(text) {
-  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET','FETCH_URL','SEARCH_COMPANY','SAVE_PROSPECT','LOG_CONTACT','CALL_PHONE','GET_CALL_STATS','SAVE_PARTNER'];
+  const cmds = ['CREATE_SHEET','ADD_SHEET_TAB','READ_SHEET','APPEND_SHEET','UPDATE_SHEET','CLEAR_SHEET','DELETE_SHEET','SHARE_SHEET','LIST_FILES','READ_EMAIL','ADD_CHART','FORMAT_SHEET','UPLOAD_EXCEL','EXPORT_SHEET','FETCH_URL','SEARCH_COMPANY','SAVE_PROSPECT','LOG_CONTACT','CALL_PHONE','MAKE_CALL','GET_CALL_STATS','SAVE_PARTNER'];
   for (const cmd of cmds) {
     const m = text.match(new RegExp(`\\[${cmd}\\]([\\s\\S]*?)\\[\\/${cmd}\\]`));
     if (m) {
       const block = m[1];
       const result = { action: cmd, raw: m[0] };
-      ['ID','RANGE','TITLE','QUERY','ROW','EMAIL','ROLE','VALUES'].forEach(f => {
+      ['ID','RANGE','TITLE','QUERY','ROW','EMAIL','ROLE','VALUES','TO','PHONE','NAME','COMPANY','CONTACT','NOTE','NUMBER'].forEach(f => {
         const val = block.match(new RegExp(`${f}:\\s*(.+)`))?.[1]?.trim();
         if (val) result[f.toLowerCase()] = val;
       });
@@ -429,6 +429,12 @@ KEY THAI PHRASES FOR CALLS:
 PRODUCTS: SBL Mineral Water 🇷🇺 (from Russia), FitnesShock Protein Bars 💪
 You have FULL access to Gmail, Google Drive and Google Sheets — you can CREATE, READ, EDIT, DELETE and SHARE sheets.
 You also have persistent memory of all previous conversations and actions.
+
+PHONE CALL COMMANDS — use EXACTLY this format:
+[CALL_PHONE][PHONE]+66xxxxxxxxx[/PHONE][/CALL_PHONE]
+or: [CALL_PHONE][TO]+66xxxxxxxxx[/TO][/CALL_PHONE]
+DO NOT use [MAKE_CALL] — it will not work.
+After initiating a call, report the result to the user.
 
 CRITICAL RULES FOR LEAD GENERATION TASKS:
 - When asked to find/search for leads or companies — write your analysis and findings as PLAIN TEXT, NOT as [SEARCH_COMPANY] commands
@@ -1049,7 +1055,9 @@ app.post('/slack/events', async (req, res) => {
           }
 
 
-        } else if (gCmd.action === 'CALL_PHONE') {
+        } else if (gCmd.action === 'CALL_PHONE' || gCmd.action === 'MAKE_CALL') {
+          // Parse phone from TO: field (MAKE_CALL format) or PHONE: field
+          if (!gCmd.phone && gCmd.to) gCmd.phone = gCmd.to;
           const phone = gCmd.phone || gCmd.number || '';
           if (!phone) { result = '⚠️ Please provide a phone number.'; }
           else {
