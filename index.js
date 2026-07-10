@@ -998,6 +998,28 @@ app.post('/slack/events', async (req, res) => {
       return;
     }
 
+    // ── Auto-detect phones in message → run campaign ──────────────────────
+    const _autoPhones = [...new Set((userText.match(/\+66[\d\s\-]{8,14}/g)||[]).map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
+    if (_autoPhones.length >= 2 && /(?:call|звон|обзвон|позвони)/i.test(userText)) {
+      await post(channel, `📞 *Felix: Auto-calling ${_autoPhones.length} numbers...*`, threadTs);
+      for (const _ph of _autoPhones) {
+        await post(channel, `📞 Calling ${_ph}...`, threadTs);
+        try {
+          const _cr = await twilioCall(_ph);
+          if (_cr.sid) {
+            await post(channel, `✅ ${_ph} — SID: ${_cr.sid} | Status: ${_cr.status}`, threadTs);
+            saveToObsidian('Felix','conversations',`**Call** | ${_ph} | ${_cr.sid}`).catch(()=>{});
+          } else {
+            await post(channel, `❌ ${_ph} — ${_cr.message||JSON.stringify(_cr).substring(0,60)}`, threadTs);
+          }
+        } catch(_e) { await post(channel, `❌ ${_ph} — error: ${_e.message}`, threadTs); }
+        await new Promise(_r=>setTimeout(_r,2000));
+      }
+      await post(channel, `✅ *Done: ${_autoPhones.length} calls initiated*`, threadTs);
+      return;
+    }
+
+
     // ── CALL CAMPAIGN command ─────────────────────────────────────────────────
     const campaignMatch = userText.match(/(?:call campaign|обзвон|start calls?|начни звон|позвони всем|call all|call list)/i);
     const limitMatch    = userText.match(/(\d+)\s*(?:компани|compan|contact|lead)/i);
@@ -1033,27 +1055,6 @@ app.post('/slack/events', async (req, res) => {
         : `⚠️ Could not find phone for ${company} online`,
         threadTs
       );
-      return;
-    }
-
-    // ── Auto-detect phones in message → run campaign ──────────────────────
-    const _autoPhones = [...new Set((userText.match(/\+66[\d\s\-]{8,14}/g)||[]).map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
-    if (_autoPhones.length >= 2 && /(?:call|звон|обзвон|позвони)/i.test(userText)) {
-      await post(channel, `📞 *Felix: Auto-calling ${_autoPhones.length} numbers...*`, threadTs);
-      for (const _ph of _autoPhones) {
-        await post(channel, `📞 Calling ${_ph}...`, threadTs);
-        try {
-          const _cr = await twilioCall(_ph);
-          if (_cr.sid) {
-            await post(channel, `✅ ${_ph} — SID: ${_cr.sid} | Status: ${_cr.status}`, threadTs);
-            saveToObsidian('Felix','conversations',`**Call** | ${_ph} | ${_cr.sid}`).catch(()=>{});
-          } else {
-            await post(channel, `❌ ${_ph} — ${_cr.message||JSON.stringify(_cr).substring(0,60)}`, threadTs);
-          }
-        } catch(_e) { await post(channel, `❌ ${_ph} — error: ${_e.message}`, threadTs); }
-        await new Promise(_r=>setTimeout(_r,2000));
-      }
-      await post(channel, `✅ *Done: ${_autoPhones.length} calls initiated*`, threadTs);
       return;
     }
 
