@@ -1702,4 +1702,61 @@ function hermesReply(text, isHermes) {
   return `<@U0BAF5QQF5Y> ${text}`;
 }
 
+
+// ── Thai Voice Scripts ────────────────────────────────────────────────────────
+const SCRIPTS = {
+  chickpea: `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="th-TH">สวัสดีครับ ผมชื่อ เฟลิกซ์ จาก บริษัท เอสบีแอล ไอที แพลตฟอร์มส์ ครับ</Say>
+  <Pause length="1"/>
+  <Say language="th-TH">เราเป็นผู้นำเข้าและจัดจำหน่าย ถั่วลูกไก่ คุณภาพพรีเมียม จากรัสเซีย ขนาด 8 มิลลิเมตรขึ้นไปครับ</Say>
+  <Pause length="1"/>
+  <Say language="th-TH">ผมอยากนัดประชุมออนไลน์ สั้นๆ กับท่าน เพื่อนำเสนอราคาและตัวอย่างสินค้าครับ</Say>
+  <Pause length="1"/>
+  <Say language="th-TH">กรุณาโทรกลับที่เบอร์ 0815162435 หรือ ส่งอีเมลมาที่ info@sblplat.co.th ครับ ขอบคุณมากครับ</Say>
+</Response>`,
+  water: `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say language="th-TH">สวัสดีครับ ผมชื่อ เฟลิกซ์ จาก บริษัท เอสบีแอล ไอที แพลตฟอร์มส์ ครับ</Say>
+  <Pause length="1"/>
+  <Say language="th-TH">เราเป็นผู้นำเข้าและจัดจำหน่าย น้ำแร่ เอสบีแอล คุณภาพพรีเมียม จากรัสเซียครับ</Say>
+  <Pause length="1"/>
+  <Say language="th-TH">กรุณาโทรกลับที่เบอร์ 0815162435 ครับ ขอบคุณมากครับ</Say>
+</Response>`,
+};
+
+// ── TwiML Routes ──────────────────────────────────────────────────────────────
+app.get('/twiml/:product', (req, res) => {
+  res.type('text/xml');
+  res.send(SCRIPTS[req.params.product] || SCRIPTS.chickpea);
+});
+app.post('/twiml/:product', (req, res) => {
+  res.type('text/xml');
+  res.send(SCRIPTS[req.params.product] || SCRIPTS.chickpea);
+});
+
+// ── Twilio Status Callback ────────────────────────────────────────────────────
+app.post('/twilio/callback', async (req, res) => {
+  res.status(200).send('OK');
+  try {
+    const sid      = req.body.CallSid;
+    const status   = req.body.CallStatus;
+    const duration = req.body.CallDuration;
+    const to       = req.body.To;
+    const recUrl   = req.body.RecordingUrl;
+    const emoji    = { completed:'✅', busy:'📵', 'no-answer':'📵', failed:'❌', canceled:'⚠️' }[status] || '❓';
+    const dur      = duration ? `${Math.floor(duration/60)}m ${duration%60}s` : '—';
+    let msg = `${emoji} *Call Report: ${to}*\n• Status: ${status}\n• Duration: ${dur}`;
+    if (recUrl) msg += `\n• 🎙️ Recording: ${recUrl}.mp3`;
+    await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: 'C0B53EXNKL1', text: msg })
+    });
+    saveToObsidian('Felix', 'call_reports', `${to} | ${status} | ${dur}`).catch(()=>{});
+  } catch(e) { console.error('Callback error:', e.message); }
+});
+
 app.listen(PORT, () => console.log(`🤖 Felix running on port ${PORT} — Full Gmail + Sheets + Memory`));
