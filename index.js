@@ -982,7 +982,9 @@ app.post('/slack/events', async (req, res) => {
 
     // ── Auto-detect phones in message → run campaign ──────────────────────
     const _autoPhones = [...new Set((userText.match(/\+66[\d\s\-]{8,14}/g)||[]).map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
-    if (_autoPhones.length >= 2 && /(?:call|звон|обзвон|позвони)/i.test(userText)) {
+    const _hasCallWord = /(?:call|звони|обзвони|позвони|обзвон)/i.test(userText);
+    const _startsWithCall = /^(?:call:|звони:|call:)/i.test(userText.trim());
+    if (_autoPhones.length >= 1 && (_hasCallWord || _startsWithCall)) {
       await post(channel, `📞 *Felix: Auto-calling ${_autoPhones.length} numbers...*`, threadTs);
       for (const _ph of _autoPhones) {
         await post(channel, `📞 Calling ${_ph}...`, threadTs);
@@ -1023,7 +1025,9 @@ app.post('/slack/events', async (req, res) => {
     }
 
     // ── CALL CAMPAIGN command ─────────────────────────────────────────────────
-    const campaignMatch = userText.match(/(?:call campaign|обзвон|start calls?|начни звон|позвони всем|call all|call list)/i);
+    // Only trigger sheet campaign if NO actual phone numbers in message
+    const _hasPhones = (_autoPhones && _autoPhones.length > 0);
+    const campaignMatch = !_hasPhones && userText.match(/(?:call campaign|обзвон|start calls?|начни звон|позвони всем|call all|call list)/i);
     const limitMatch    = userText.match(/(\d+)\s*(?:компани|compan|contact|lead)/i);
     if (campaignMatch) {
       const limit = limitMatch ? parseInt(limitMatch[1]) : 5;
