@@ -1,4 +1,10 @@
 'use strict';
+
+// ── Twilio (global) ──────────────────────────────────────────────────────────
+const TWILIO_SID   = (process.env.TWILIO_ACCOUNT_SID || '').trim();
+const TWILIO_TOKEN = (process.env.TWILIO_AUTH_TOKEN  || '').trim();
+const TWILIO_FROM  = (process.env.TWILIO_FROM_NUMBER || '+13365158698').split('=')[0].trim();
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -415,10 +421,23 @@ LANGUAGE WITH HERMES:
 - Start response with mention: @SBL personal assistant  
 - Be concise and direct in replies to Hermes
 
-You are Felix, the B2B Sales AI Agent for SBL IT Platforms Co., Ltd.
-You specialize in the THAI MARKET — working with Thai companies, distributors, gyms, pharmacies, supermarkets.
-You communicate in THAI with Thai partners and in ENGLISH with international contacts.
-When making calls via Twilio, use Thai language for Thai companies.
+You are Felix, autonomous B2B Sales AI Agent for SBL IT Platforms Co., Ltd.
+You ARE the one making calls via Twilio — you are NOT a human, you are an AI bot with Twilio integration.
+You specialize in the THAI MARKET — Thai companies, distributors, gyms, pharmacies, supermarkets.
+
+CRITICAL BEHAVIOR RULES:
+- When asked to make calls or do a call campaign — DO IT IMMEDIATELY using [CALL_PHONE] commands
+- NEVER say you cannot make calls — you CAN and MUST make them
+- NEVER ask for confirmation before calling — just call
+- NEVER explain plans — execute and report results
+- After each call: report status (initiated/failed) with SID
+- You communicate in Thai with Thai companies, English with others
+
+CALL COMMAND FORMAT (use exactly):
+[CALL_PHONE][PHONE]+66xxxxxxxxx[/PHONE][/CALL_PHONE]
+
+For call campaigns, call each company one by one using [CALL_PHONE] for each number.
+If you see a list of companies with phones — call ALL of them in sequence.
 
 KEY THAI PHRASES FOR CALLS:
 - สวัสดีครับ/ค่ะ ผม/ดิฉัน ชื่อ เฟลิกซ์ จาก SBL IT Platforms (Hello, my name is Felix from SBL)
@@ -715,6 +734,107 @@ app.get('/health', (req, res) => {
 });
 
 // ── Slack Events ──────────────────────────────────────────────
+
+// ── Twilio call function ──────────────────────────────────────────────────────
+async function twilioCall(phone) {
+  const auth = Buffer.from(TWILIO_SID + ':' + TWILIO_TOKEN).toString('base64');
+  const body = new URLSearchParams({
+    To:   phone,
+    From: TWILIO_FROM,
+    Url:  'http://demo.twilio.com/docs/voice.xml'
+  });
+  const r = await fetch('https://api.twilio.com/2010-04-01/Accounts/' + TWILIO_SID + '/Calls.json', {
+    method: 'POST',
+    headers: { 'Authorization': 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  });
+  return await r.json();
+}
+
+// ── Read contacts from Google Sheet ──────────────────────────────────────────
+async function readContactsFromSheet(sheetConfig, limit) {
+  try {
+    const tok  = await getOAuthToken();
+    const url  = `https://sheets.googleapis.com/v4/spreadsheets/${sheetConfig.id}/values/${encodeURIComponent(sheetConfig.tab)}!A:M`;
+    const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + tok } });
+    const data = await resp.json();
+    const rows = (data.values || []).slice(1);
+    return rows.slice(0, limit || 50).map((row, i) => ({
+      num:      row[0] || (i + 1),
+      company:  row[1] || '',
+      type:     row[2] || '',
+      city:     row[3] || '',
+      website:  row[4] || '',
+      email:    row[5] || '',
+      phone:    (row[6] || '').replace(/\s+/g, ''),
+      whatsapp: (row[7] || '').replace(/\s+/g, ''),
+      lpr_name: row[8] || '',
+      lpr_pos:  row[9] || '',
+      priority: row[11] || '',
+      product:  sheetConfig.product || '',
+    })).filter(r => r.company);
+  } catch(e) {
+    console.error('readContactsFromSheet error:', e.message);
+    return [];
+  }
+}
+
+// ── Find phone online via Tavily ──────────────────────────────────────────────
+async function findPhoneOnline(company, website) {
+  try {
+    const query = website
+      ? `site:${website} phone contact number Thailand`
+      : `"${company}" Thailand phone contact number`;
+    const resp = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: TAVILY_KEY, query, max_results: 3 })
+    });
+    const data = await resp.json();
+    const text = (data.results || []).map(r => r.content).join(' ');
+    const phones = text.match(/(?:\+66|0)\s?[\d\s\-]{8,12}/g) || [];
+    const clean = phones.map(p => p.replace(/\s+/g, '').replace(/^0/, '+66')).filter(p => p.length >= 10);
+    return clean[0] || null;
+  } catch(e) { return null; }
+}
+
+// ── Auto call campaign ────────────────────────────────────────────────────────
+async function runCallCampaign(contacts, channel, threadTs, postFn) {
+  const results = [];
+  for (const c of contacts) {
+    let phone = c.phone || c.whatsapp;
+    if (phone) phone = phone.replace(/[\s\-\(\)]/g, '');
+    if (phone && !phone.startsWith('+')) phone = '+' + phone.replace(/^0/, '66');
+    if (!phone || phone.length < 10) {
+      await postFn(channel, `🔍 *${c.company}* — no phone, searching online...`, threadTs);
+      phone = await findPhoneOnline(c.company, c.website);
+    }
+    if (!phone) {
+      results.push({ company: c.company, status: 'no_phone' });
+      await postFn(channel, `⚠️ *${c.company}* — phone not found, skipping`, threadTs);
+      continue;
+    }
+    await postFn(channel, `📞 Calling *${c.company}* at ${phone}...`, threadTs);
+    try {
+      const cr = await twilioCall(phone);
+      if (cr.sid) {
+        results.push({ company: c.company, phone, status: 'initiated', sid: cr.sid });
+        await postFn(channel, `✅ *${c.company}* — SID: ${cr.sid}`, threadTs);
+        saveToObsidian('Felix', 'conversations', `**Call** | ${c.company} | ${phone} | ${cr.sid}`).catch(()=>{});
+      } else {
+        results.push({ company: c.company, phone, status: 'failed', error: cr.message });
+        await postFn(channel, `❌ *${c.company}* — ${cr.message || JSON.stringify(cr).substring(0,80)}`, threadTs);
+      }
+    } catch(e) {
+      results.push({ company: c.company, phone, status: 'error', error: e.message });
+      await postFn(channel, `❌ *${c.company}* — error: ${e.message}`, threadTs);
+    }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return results;
+}
+
+
 app.post('/slack/events', async (req, res) => {
   const body = req.body;
   if (body?.type === 'url_verification') return res.status(200).json({ challenge: body.challenge });
@@ -835,6 +955,107 @@ app.post('/slack/events', async (req, res) => {
   }
   hist.push({ role: 'user', content: prompt });
   if (hist.length > 40) hist.splice(0, hist.length - 40);
+
+    // ── Direct call command (bypasses Claude) ──────────────────────
+    const _callMatch = userText.match(/(?:^|\n)\s*(?:call|звони|позвони)\s+(<tel:[^>]+>|\+?[\d\s\-]{7,})/i);
+    if (_callMatch) {
+      const _raw = _callMatch[1];
+      const _telM = _raw.match(/<tel:([^|>]+)/);
+      const _rawPhone = _telM ? _telM[1] : _raw.replace(/[^+0-9]/g, '');
+      const _phone = _rawPhone.startsWith('+') ? _rawPhone : '+' + _rawPhone;
+      console.log('Felix direct call to:', _phone);
+      try {
+        const _cr = await twilioCall(_phone);
+        if (_cr.sid) {
+          await post(channel, '\u2705 *Call initiated!*\n\u2022 Phone: ' + _phone + '\n\u2022 SID: ' + _cr.sid + '\n\u2022 Status: ' + _cr.status + '\n\n\uD83C\uDDF9\uD83C\uDDED Felix will speak Thai with them.', threadTs);
+          memory.actions.push({ time: new Date().toISOString(), action: 'call', phone: _phone, sid: _cr.sid });
+          saveMemory(memory);
+          saveToObsidian('Felix', 'conversations', '**Call** | ' + _phone + ' | SID: ' + _cr.sid).catch(()=>{});
+        } else {
+          await post(channel, '\u26a0\ufe0f *Call failed*\n\u2022 Phone: ' + _phone + '\n\u2022 Error: ' + (_cr.message || JSON.stringify(_cr).substring(0,100)), threadTs);
+        }
+      } catch(_e) { await post(channel, '\u26a0\ufe0f Call error: ' + _e.message, threadTs); }
+      return;
+    }
+
+    // ── READ CONTACTS command ──────────────────────────────────────────────
+    const readContactsMatch = /(?:read|load|get|show|список|контакт|прочитай)\s+(?:contacts?|лид|таблиц)/i.test(userText);
+    if (readContactsMatch) {
+      await post(channel, '📋 *Felix: Reading contacts from Google Sheet...*', threadTs);
+      const contacts = await readContactsFromSheet(CONTACTS_SHEETS[0], 30);
+      if (!contacts.length) { await post(channel, '⚠️ No contacts found in sheet', threadTs); return; }
+      const withPhone = contacts.filter(c => c.phone || c.whatsapp);
+      const noPhone   = contacts.filter(c => !c.phone && !c.whatsapp);
+      const summary = contacts.slice(0, 10).map(c =>
+        `• #${c.num} *${c.company}* (${c.city}) — ${c.phone || c.whatsapp || '❌ no phone'} | ${c.lpr_name || '-'}`
+      ).join('\n');
+      await post(channel,
+        `📋 *Contacts loaded: ${contacts.length} companies*\n` +
+        `• With phone: ${withPhone.length}\n• No phone (will search online): ${noPhone.length}\n\n` +
+        summary + (contacts.length > 10 ? `\n_...and ${contacts.length - 10} more_` : ''),
+        threadTs
+      );
+      return;
+    }
+
+    // ── CALL CAMPAIGN command ─────────────────────────────────────────────────
+    const campaignMatch = userText.match(/(?:call campaign|обзвон|start calls?|начни звон|позвони всем|call all|call list)/i);
+    const limitMatch    = userText.match(/(\d+)\s*(?:компани|compan|contact|lead)/i);
+    if (campaignMatch) {
+      const limit = limitMatch ? parseInt(limitMatch[1]) : 5;
+      await post(channel, `📞 *Felix: Starting call campaign (${limit} contacts)...*`, threadTs);
+      const allContacts = await readContactsFromSheet(CONTACTS_SHEETS[0], 50);
+      // Filter HOT/WARM priority first, skip those already with — in phone
+      const prioritized = [
+        ...allContacts.filter(c => c.priority === 'HOT'),
+        ...allContacts.filter(c => c.priority === 'WARM' && !allContacts.find(x => x === c && x.priority === 'HOT')),
+        ...allContacts.filter(c => !['HOT','WARM'].includes(c.priority)),
+      ].slice(0, limit);
+      const results = await runCallCampaign(prioritized, channel, threadTs, post);
+      const succeeded = results.filter(r => r.status === 'initiated').length;
+      const failed    = results.filter(r => ['failed','error','no_phone'].includes(r.status)).length;
+      await post(channel,
+        `✅ *Campaign complete*\n• Called: ${succeeded}/${results.length}\n• Failed/No phone: ${failed}\n\n` +
+        `_Results saved to Obsidian memory_`,
+        threadTs
+      );
+      return;
+    }
+
+    // ── FIND PHONE command ────────────────────────────────────────────────────
+    const findPhoneMatch = userText.match(/(?:find phone|найди номер|поиск номер)\s+(.+)/i);
+    if (findPhoneMatch) {
+      const company = findPhoneMatch[1].trim();
+      await post(channel, `🔍 *Felix: Searching phone for ${company}...*`, threadTs);
+      const phone = await findPhoneOnline(company, null);
+      await post(channel, phone
+        ? `✅ Found: *${phone}* for ${company}`
+        : `⚠️ Could not find phone for ${company} online`,
+        threadTs
+      );
+      return;
+    }
+
+    // ── Auto-detect phones in message → run campaign ──────────────────────
+    const _autoPhones = [...new Set((userText.match(/\+66[\d\s\-]{8,14}/g)||[]).map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
+    if (_autoPhones.length >= 2 && /(?:call|звон|обзвон|позвони)/i.test(userText)) {
+      await post(channel, `📞 *Felix: Auto-calling ${_autoPhones.length} numbers...*`, threadTs);
+      for (const _ph of _autoPhones) {
+        await post(channel, `📞 Calling ${_ph}...`, threadTs);
+        try {
+          const _cr = await twilioCall(_ph);
+          if (_cr.sid) {
+            await post(channel, `✅ ${_ph} — SID: ${_cr.sid} | Status: ${_cr.status}`, threadTs);
+            saveToObsidian('Felix','conversations',`**Call** | ${_ph} | ${_cr.sid}`).catch(()=>{});
+          } else {
+            await post(channel, `❌ ${_ph} — ${_cr.message||JSON.stringify(_cr).substring(0,60)}`, threadTs);
+          }
+        } catch(_e) { await post(channel, `❌ ${_ph} — error: ${_e.message}`, threadTs); }
+        await new Promise(_r=>setTimeout(_r,2000));
+      }
+      await post(channel, `✅ *Done: ${_autoPhones.length} calls initiated*`, threadTs);
+      return;
+    }
 
   const typing = await post(channel, '_Felix is thinking... 🤔_', threadTs);
 
@@ -1138,9 +1359,23 @@ app.post('/slack/commands', async (req, res) => {
 
 // ── Tavily API (professional web search) ─────────────────────────────────
 const TAVILY_KEY    = process.env.TAVILY_API_KEY || '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';
-const TWILIO_SID    = (process.env.TWILIO_ACCOUNT_SID || '').trim();
-const TWILIO_TOKEN  = (process.env.TWILIO_AUTH_TOKEN  || '').trim();
-const TWILIO_FROM   = (process.env.TWILIO_FROM_NUMBER || '+13365158698').trim();
+
+// ── Thai Contacts Sheets ──────────────────────────────────────────────────────
+const CONTACTS_SHEETS = [
+  { id: '1QW2rJoYMWR68t1K9ZAEEOQseIr5DUCm6RwfpfyRGzPY', tab: 'Chickpea Buyers', product: 'Chickpeas' },
+];
+// Column mapping (0-based): B=1(Company), E=4(Website), F=5(Email), G=6(Phone), H=7(WhatsApp), I=8(LPR Name), J=9(LPR Position), L=11(Priority)
+const COL_COMPANY  = 1;
+const COL_TYPE     = 2;
+const COL_CITY     = 3;
+const COL_WEBSITE  = 4;
+const COL_EMAIL    = 5;
+const COL_PHONE    = 6;
+const COL_WA       = 7;
+const COL_LPR_NAME = 8;
+const COL_LPR_POS  = 9;
+const COL_PRIORITY = 11;
+  // Twilio credentials from global scope
 
 async function tavilySearch(query, maxResults = 5) {
   try {
