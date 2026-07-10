@@ -736,12 +736,14 @@ app.get('/health', (req, res) => {
 // ── Slack Events ──────────────────────────────────────────────
 
 // ── Twilio call function ──────────────────────────────────────────────────────
-async function twilioCall(phone) {
+async function twilioCall(phone, product) {
   const auth = Buffer.from(TWILIO_SID + ':' + TWILIO_TOKEN).toString('base64');
+  // Use Felix's own TwiML endpoint for Thai voice script
+  const twimlUrl = 'https://web-production-6afcd.up.railway.app/twiml/' + (product || 'chickpea');
   const body = new URLSearchParams({
     To:   phone,
     From: TWILIO_FROM,
-    Url:  'http://demo.twilio.com/docs/voice.xml'
+    Url:  twimlUrl
   });
   const r = await fetch('https://api.twilio.com/2010-04-01/Accounts/' + TWILIO_SID + '/Calls.json', {
     method: 'POST',
