@@ -978,26 +978,6 @@ app.post('/slack/events', async (req, res) => {
       return;
     }
 
-    // ── READ CONTACTS command ──────────────────────────────────────────────
-    const readContactsMatch = /(?:read|load|get|show|список|контакт|прочитай)\s+(?:contacts?|лид|таблиц)/i.test(userText);
-    if (readContactsMatch) {
-      await post(channel, '📋 *Felix: Reading contacts from Google Sheet...*', threadTs);
-      const contacts = await readContactsFromSheet(CONTACTS_SHEETS[0], 30);
-      if (!contacts.length) { await post(channel, '⚠️ No contacts found in sheet', threadTs); return; }
-      const withPhone = contacts.filter(c => c.phone || c.whatsapp);
-      const noPhone   = contacts.filter(c => !c.phone && !c.whatsapp);
-      const summary = contacts.slice(0, 10).map(c =>
-        `• #${c.num} *${c.company}* (${c.city}) — ${c.phone || c.whatsapp || '❌ no phone'} | ${c.lpr_name || '-'}`
-      ).join('\n');
-      await post(channel,
-        `📋 *Contacts loaded: ${contacts.length} companies*\n` +
-        `• With phone: ${withPhone.length}\n• No phone (will search online): ${noPhone.length}\n\n` +
-        summary + (contacts.length > 10 ? `\n_...and ${contacts.length - 10} more_` : ''),
-        threadTs
-      );
-      return;
-    }
-
     // ── Auto-detect phones in message → run campaign ──────────────────────
     const _autoPhones = [...new Set((userText.match(/\+66[\d\s\-]{8,14}/g)||[]).map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
     if (_autoPhones.length >= 2 && /(?:call|звон|обзвон|позвони)/i.test(userText)) {
@@ -1019,6 +999,26 @@ app.post('/slack/events', async (req, res) => {
       return;
     }
 
+
+    // ── READ CONTACTS command ──────────────────────────────────────────────
+    const readContactsMatch = /(?:read|load|get|show|список|контакт|прочитай)\s+(?:contacts?|лид|таблиц)/i.test(userText);
+    if (readContactsMatch) {
+      await post(channel, '📋 *Felix: Reading contacts from Google Sheet...*', threadTs);
+      const contacts = await readContactsFromSheet(CONTACTS_SHEETS[0], 30);
+      if (!contacts.length) { await post(channel, '⚠️ No contacts found in sheet', threadTs); return; }
+      const withPhone = contacts.filter(c => c.phone || c.whatsapp);
+      const noPhone   = contacts.filter(c => !c.phone && !c.whatsapp);
+      const summary = contacts.slice(0, 10).map(c =>
+        `• #${c.num} *${c.company}* (${c.city}) — ${c.phone || c.whatsapp || '❌ no phone'} | ${c.lpr_name || '-'}`
+      ).join('\n');
+      await post(channel,
+        `📋 *Contacts loaded: ${contacts.length} companies*\n` +
+        `• With phone: ${withPhone.length}\n• No phone (will search online): ${noPhone.length}\n\n` +
+        summary + (contacts.length > 10 ? `\n_...and ${contacts.length - 10} more_` : ''),
+        threadTs
+      );
+      return;
+    }
 
     // ── CALL CAMPAIGN command ─────────────────────────────────────────────────
     const campaignMatch = userText.match(/(?:call campaign|обзвон|start calls?|начни звон|позвони всем|call all|call list)/i);
