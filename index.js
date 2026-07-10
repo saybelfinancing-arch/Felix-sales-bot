@@ -1708,22 +1708,22 @@ const SCRIPTS = {
   chickpea: `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Pause length="1"/>
-  <Say language="th-TH">สวัสดีครับ ผมชื่อ เฟลิกซ์ จาก บริษัท เอสบีแอล ไอที แพลตฟอร์มส์ ครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">สวัสดีครับ ผมชื่อ เฟลิกซ์ จาก บริษัท เอสบีแอล ไอที แพลตฟอร์มส์ ครับ</Say>
   <Pause length="1"/>
-  <Say language="th-TH">เราเป็นผู้นำเข้าและจัดจำหน่าย ถั่วลูกไก่ คุณภาพพรีเมียม จากรัสเซีย ขนาด 8 มิลลิเมตรขึ้นไปครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">เราเป็นผู้นำเข้าและจัดจำหน่าย ถั่วลูกไก่ คุณภาพพรีเมียม จากรัสเซีย ขนาด 8 มิลลิเมตรขึ้นไปครับ</Say>
   <Pause length="1"/>
-  <Say language="th-TH">ผมอยากนัดประชุมออนไลน์ สั้นๆ กับท่าน เพื่อนำเสนอราคาและตัวอย่างสินค้าครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">ผมอยากนัดประชุมออนไลน์ สั้นๆ กับท่าน เพื่อนำเสนอราคาและตัวอย่างสินค้าครับ</Say>
   <Pause length="1"/>
-  <Say language="th-TH">กรุณาโทรกลับที่เบอร์ 0815162435 หรือ ส่งอีเมลมาที่ info@sblplat.co.th ครับ ขอบคุณมากครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">กรุณาโทรกลับที่เบอร์ 0815162435 หรือ ส่งอีเมลมาที่ info@sblplat.co.th ครับ ขอบคุณมากครับ</Say>
 </Response>`,
   water: `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Pause length="1"/>
-  <Say language="th-TH">สวัสดีครับ ผมชื่อ เฟลิกซ์ จาก บริษัท เอสบีแอล ไอที แพลตฟอร์มส์ ครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">สวัสดีครับ ผมชื่อ เฟลิกซ์ จาก บริษัท เอสบีแอล ไอที แพลตฟอร์มส์ ครับ</Say>
   <Pause length="1"/>
-  <Say language="th-TH">เราเป็นผู้นำเข้าและจัดจำหน่าย น้ำแร่ เอสบีแอล คุณภาพพรีเมียม จากรัสเซียครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">เราเป็นผู้นำเข้าและจัดจำหน่าย น้ำแร่ เอสบีแอล คุณภาพพรีเมียม จากรัสเซียครับ</Say>
   <Pause length="1"/>
-  <Say language="th-TH">กรุณาโทรกลับที่เบอร์ 0815162435 ครับ ขอบคุณมากครับ</Say>
+  <Say voice="Google.th-TH-Standard-A" language="th-TH">กรุณาโทรกลับที่เบอร์ 0815162435 ครับ ขอบคุณมากครับ</Say>
 </Response>`,
 };
 
