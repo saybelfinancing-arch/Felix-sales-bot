@@ -959,7 +959,7 @@ app.post('/slack/events', async (req, res) => {
   if (hist.length > 40) hist.splice(0, hist.length - 40);
 
     // ── Direct call command (bypasses Claude) ──────────────────────
-    const _callMatch = userText.match(/(?:^|\n)\s*(?:call|звони|позвони)\s+(<tel:[^>]+>|\+?[\d\s\-]{7,})/i);
+    const _callMatch = userText.match(/(?:^|\n)\s*(?:call:|call|звони:|звони|позвони)\s+(<tel:[^>]+>|\+[\d][\d\s\-]{7,})/i);
     if (_callMatch) {
       const _raw = _callMatch[1];
       const _telM = _raw.match(/<tel:([^|>]+)/);
@@ -981,7 +981,12 @@ app.post('/slack/events', async (req, res) => {
     }
 
     // ── Auto-detect phones in message → run campaign ──────────────────────
-    const _autoPhones = [...new Set((userText.match(/\+66[\d\s\-]{8,14}/g)||[]).map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
+    // Match any international phone: +66xxx, +7xxx, <tel:+xxx|+xxx>
+    const _rawPhones = [
+      ...(userText.match(/<tel:(\+[\d]+)[^>]*>/g)||[]).map(m => m.match(/<tel:(\+[\d]+)/)?.[1]),
+      ...(userText.match(/\+\d{1,3}[\d\s\-]{7,14}/g)||[]),
+    ].filter(Boolean);
+    const _autoPhones = [...new Set(_rawPhones.map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
     const _hasCallWord = /(?:call|звони|обзвони|позвони|обзвон)/i.test(userText);
     const _startsWithCall = /^(?:call:|звони:|call:)/i.test(userText.trim());
     if (_autoPhones.length >= 1 && (_hasCallWord || _startsWithCall)) {
