@@ -3,13 +3,18 @@
   "version": "2.0.0",
   "description": "Felix — Sales Agent with Gmail + Google Drive + File Reading for SBL IT Platforms",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
+    "exceljs": "^4.3.0",
     "express": "^4.18.2",
+    "mammoth": "^1.6.0",
     "nodemailer": "^6.9.8",
     "pdf-parse": "^1.1.1",
-    "exceljs": "^4.3.0",
-    "mammoth": "^1.6.0"
+    "ws": "^8.21.1"
   },
-  "engines": { "node": ">=18.0.0" }
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
