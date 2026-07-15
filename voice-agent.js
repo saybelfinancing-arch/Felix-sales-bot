@@ -313,7 +313,6 @@ function attach({ app, server, onOutcome }) {
       transcriptionLanguage="${cfg.language}"
       voice="${cfg.voice}"
       transcriptionProvider="${cfg.transcriptionProvider}"
-      speechModel="${cfg.speechModel}"
       interruptible="true" />
   </Connect>
 </Response>`;
