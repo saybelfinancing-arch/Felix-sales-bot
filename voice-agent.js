@@ -20,9 +20,12 @@
 const WebSocket = require('ws');
 const SCRIPTS   = require('./voice-script');
 
-const ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || '').trim();
-const AUTH_TOKEN  = (process.env.TWILIO_AUTH_TOKEN  || '').trim();
-const FROM_NUMBER = (process.env.TWILIO_PHONE_NUMBER || '').trim();
+const ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID || '').trim();
+const AUTH_TOKEN  = (process.env.TWILIO_AUTH_TOKEN  || process.env.TWILIO_TOKEN || '').trim();
+// Имя различается между ботами: Felix использует TWILIO_FROM_NUMBER.
+// Чистим значение от возможного мусора (=, пробелы) — исторический баг.
+const FROM_NUMBER = (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER || '')
+  .split('=')[0].replace(/[^\d+]/g, '').trim();
 const PUBLIC_HOST = (process.env.PUBLIC_HOST || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
 const CLAUDE_KEY  = (process.env.ANTHROPIC_API_KEY || '').trim();
 
