@@ -18,7 +18,7 @@ const COMPANY = {
 const FELIX = {
   // ── Голос и язык ────────────────────────────────────────────────
   language:      'th-TH',              // стартовый язык
-  voice:         'th-TH-Neural2-C',    // женский тайский (Google)
+  voice:         'th-TH-Standard-A',    // женский тайский (Google)
   altLanguage:   'en-US',              // куда переключаемся при необходимости
   altVoice:      'en-US-Neural2-F',
   transcriptionProvider: 'google',
