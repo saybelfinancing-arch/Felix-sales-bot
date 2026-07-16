@@ -737,6 +737,31 @@ app.get('/health', (req, res) => {
 
 // ── Slack Events ──────────────────────────────────────────────
 
+// ── Нормализация телефона + защита от дублей ──────────────────────────────────
+// Чинит битые форматы (+660889405574 → +66889405574: лишний 0 после кода страны)
+function normalizePhone(raw) {
+  if (!raw) return '';
+  let p = String(raw).replace(/[^\d+]/g, '');       // только цифры и +
+  if (!p.startsWith('+')) p = '+' + p;
+  // Таиланд: +66 + '0' + номер  →  убираем ведущий 0 (нац. префикс)
+  p = p.replace(/^\+660/, '+66');
+  // Россия: 8XXXXXXXXXX → +7XXXXXXXXXX
+  p = p.replace(/^\+?8(\d{10})$/, '+7$1');
+  return p;
+}
+
+// Дедуп: один номер — не чаще раза в 3 минуты (гасит петли Hermes и двойные клики)
+const _recentCalls = new Map();
+function _isDuplicateCall(phone) {
+  const now = Date.now();
+  const last = _recentCalls.get(phone) || 0;
+  if (now - last < 3 * 60 * 1000) return true;
+  _recentCalls.set(phone, now);
+  // чистим старые записи
+  for (const [k, t] of _recentCalls) if (now - t > 10 * 60 * 1000) _recentCalls.delete(k);
+  return false;
+}
+
 // ── Twilio call ───────────────────────────────────────────────────────────────
 // Раньше отдавался статичный <Say> + отбой (робот зачитывал текст и вешал трубку).
 // Теперь звонок подключается к голосовому AI-агенту: он ВЕДЁТ ДИАЛОГ по сценарию
@@ -962,8 +987,12 @@ app.post('/slack/events', async (req, res) => {
     if (_callMatch) {
       const _raw = _callMatch[1];
       const _telM = _raw.match(/<tel:([^|>]+)/);
-      const _rawPhone = _telM ? _telM[1] : _raw.replace(/[^+0-9]/g, '');
-      const _phone = _rawPhone.startsWith('+') ? _rawPhone : '+' + _rawPhone;
+      const _rawPhone = _telM ? _telM[1] : _raw;
+      const _phone = normalizePhone(_rawPhone);
+      if (_isDuplicateCall(_phone)) {
+        console.log('⏭️  Дубль звонка пропущен:', _phone);
+        return;
+      }
       console.log('Felix direct call to:', _phone);
       try {
         const _cr = await twilioCall(_phone);
@@ -987,10 +1016,22 @@ app.post('/slack/events', async (req, res) => {
     ].filter(Boolean);
     const _autoPhones = [...new Set(_rawPhones.map(p=>p.replace(/[\s\-]/g,'')))].filter(p=>p.length>=10);
     const _hasCallWord = /(?:call|звони|обзвони|позвони|обзвон)/i.test(userText);
-    const _startsWithCall = /^(?:call:|звони:|call:)/i.test(userText.trim());
-    if (_autoPhones.length >= 1 && (_hasCallWord || _startsWithCall)) {
-      await post(channel, `📞 *Felix: Auto-calling ${_autoPhones.length} numbers...*`, threadTs);
-      for (const _ph of _autoPhones) {
+    // Явная команда кампании: начинается с call/звони, либо содержит "call campaign".
+    // Рассуждения ботов ("it looks like...", "the request is to call") НЕ считаются командой.
+    const _explicitCampaign =
+      /^\s*(?:call:|звони:|обзвони|call\s+campaign|звонить)/i.test(userText.trim()) ||
+      /call\s+campaign|обзвон\s+кампани/i.test(userText);
+    // Признак "болтовни" бота: описательные обороты вокруг слова call
+    const _looksLikeChatter =
+      /(?:it looks like|the request|i(?:'| a)m going to|i will|attempting|похоже|кажется|собираюсь)/i.test(userText);
+    if (_autoPhones.length >= 1 && _explicitCampaign && !_looksLikeChatter) {
+      // Нормализация + дедуп для каждого номера кампании
+      const _seen = new Set();
+      var _campaignPhones = _autoPhones.map(normalizePhone)
+        .filter(p => { if (_seen.has(p) || _isDuplicateCall(p)) return false; _seen.add(p); return true; });
+      if (_campaignPhones.length === 0) { console.log('⏭️  Кампания: все номера — дубли'); return; }
+      await post(channel, `📞 *Felix: Auto-calling ${_campaignPhones.length} numbers...*`, threadTs);
+      for (const _ph of _campaignPhones) {
         await post(channel, `📞 Calling ${_ph}...`, threadTs);
         try {
           const _cr = await twilioCall(_ph);
@@ -1003,7 +1044,7 @@ app.post('/slack/events', async (req, res) => {
         } catch(_e) { await post(channel, `❌ ${_ph} — error: ${_e.message}`, threadTs); }
         await new Promise(_r=>setTimeout(_r,2000));
       }
-      await post(channel, `✅ *Done: ${_autoPhones.length} calls initiated*`, threadTs);
+      await post(channel, `✅ *Done: ${_campaignPhones.length} calls initiated*`, threadTs);
       return;
     }
 
