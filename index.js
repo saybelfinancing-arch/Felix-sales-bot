@@ -982,6 +982,41 @@ app.post('/slack/events', async (req, res) => {
   hist.push({ role: 'user', content: prompt });
   if (hist.length > 40) hist.splice(0, hist.length - 40);
 
+    // ── Команда звонка в формате оркестратора Hermes ──────────────
+    // Hermes шлёт структурированную задачу: "CALL TASK ... Customer: +66...".
+    // Ловим ТОЛЬКО явный CALL TASK (не болтовню) → петли нет.
+    // Номер берём из строки Customer:, нормализуем, дедупим, звоним ОДИН раз.
+    if (isFromHermes && /CALL\s*TASK/i.test(userText)) {
+      const _hm = userText.match(/Customer:\s*(\+[\d\s\-()]{7,})/i)
+               || userText.match(/(\+\d[\d\s\-()]{7,})/);
+      if (_hm) {
+        const _phone = normalizePhone(_hm[1]);
+        if (_isDuplicateCall(_phone)) {
+          console.log('⏭️  Дубль (Hermes CALL TASK):', _phone);
+          await post(channel, '⏭️ Звонок на ' + _phone + ' уже был недавно — пропускаю дубль.', threadTs);
+          return;
+        }
+        console.log('Felix Hermes CALL TASK →', _phone);
+        try {
+          const _cr = await twilioCall(_phone);
+          if (_cr.sid) {
+            await post(channel, '<@' + HERMES_USER_ID + '> ✅ Call initiated to ' + _phone +
+              '\n• SID: ' + _cr.sid + '\n• Status: ' + _cr.status +
+              '\n🇹🇭 Felix will speak Thai. Outcome will follow.', threadTs);
+            memory.actions.push({ time: new Date().toISOString(), action: 'call', phone: _phone, sid: _cr.sid, src: 'hermes' });
+            saveMemory(memory);
+            saveToObsidian('Felix', 'conversations', '**Call (Hermes)** | ' + _phone + ' | SID: ' + _cr.sid).catch(()=>{});
+          } else {
+            await post(channel, '<@' + HERMES_USER_ID + '> ⚠️ Call failed for ' + _phone +
+              ': ' + (_cr.message || 'unknown'), threadTs);
+          }
+        } catch(_e) {
+          await post(channel, '<@' + HERMES_USER_ID + '> ⚠️ Call error: ' + _e.message, threadTs);
+        }
+        return;   // не отдаём Claude — иначе сгенерит текст-имитацию "звоню..."
+      }
+    }
+
     // ── Direct call command (bypasses Claude) ──────────────────────
     const _callMatch = userText.match(/(?:^|\n)\s*(?:call:|call|звони:|звони|позвони)\s+(<tel:[^>]+>|\+[\d][\d\s\-]{7,})/i);
     if (_callMatch) {
