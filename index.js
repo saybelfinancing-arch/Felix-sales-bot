@@ -887,8 +887,10 @@ app.post('/slack/events', async (req, res) => {
   
   if (event.bot_id && !isHermesEvent && !isTargetingFelix) return;
   
-  // Re-check isHermesEvent including if it targets Felix
-  const isEffectivelyHermes = isHermesEvent || (event.bot_id && isTargetingFelix);
+  // ВАЖНО: сообщение от Hermes само по себе НЕ должно давать право отвечать —
+  // иначе Felix отвечает на КАЖДОЕ сообщение Hermes в общем канале, даже если
+  // оно явно адресовано другому агенту. Требуем И isHermesEvent, И isTargetingFelix.
+  const isEffectivelyHermes = isHermesEvent && isTargetingFelix;
 
   const key = event.client_msg_id || event.ts;
   if (processed.has(key)) return;
@@ -907,7 +909,7 @@ app.post('/slack/events', async (req, res) => {
   const isDM = event.channel_type === 'im';
   const isMentioned = BOT_ID ? (event.text || '').includes(`<@${BOT_ID}>`) : false;
   const isNameMentioned = rawMsg.includes('@felix') || (event.text||'').includes('<@U0AM5RPU9S9>');
-  const isFromHermes = isEffectivelyHermes || isHermesEvent;
+  const isFromHermes = isEffectivelyHermes;
   console.log('Felix trigger: isDM='+isDM+' isMentioned='+isMentioned+' isName='+isNameMentioned+' isHermes='+isFromHermes+' text='+(event.text||'').substring(0,80));
   // Respond only if: DM, bot tag @mention, name/ID explicitly mentioned, OR Hermes command
   if (!isDM && !isMentioned && !isNameMentioned && !isFromHermes) return;
